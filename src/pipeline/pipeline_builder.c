@@ -1,3 +1,4 @@
+/* Translate validated channel settings into an owned, shell-free FFmpeg argv. */
 #include "gateway/pipeline_builder.h"
 
 #include <stdarg.h>
@@ -64,6 +65,7 @@ static gw_status append_argument(gw_pipeline_argv *arguments, const char *value,
         set_error(error, GW_ERR_NO_MEMORY, "cannot allocate FFmpeg argument");
         return GW_ERR_NO_MEMORY;
     }
+    /* Keep argv null-terminated after every append for safe early handoff/cleanup. */
     arguments->items[arguments->count++] = copy;
     arguments->items[arguments->count] = NULL;
     return GW_OK;
@@ -258,6 +260,7 @@ gw_status gw_pipeline_render_redacted(const gw_pipeline_argv *arguments,
             set_error(error, GW_ERR_ARGUMENT, "FFmpeg argument %zu is null", index);
             return GW_ERR_ARGUMENT;
         }
+        /* Rendering is diagnostic only; the original argv retains real credentials. */
         if (strstr(value, "://") != NULL) {
             status = gw_redact_url(value, redacted, sizeof(redacted));
             if (status != GW_OK) {

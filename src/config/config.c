@@ -1,3 +1,4 @@
+/* YAML-to-gw_config translation, defaulting, expansion, and policy validation. */
 #include "gateway/config.h"
 
 #include <ctype.h>
@@ -45,6 +46,7 @@ static yaml_node_t *mapping_value(yaml_document_t *document, yaml_node_t *mappin
     if (mapping == NULL || mapping->type != YAML_MAPPING_NODE) {
         return NULL;
     }
+    /* libyaml stores pair members as document-local node IDs, not pointers. */
     for (pair = mapping->data.mapping.pairs.start;
          pair < mapping->data.mapping.pairs.top; ++pair) {
         yaml_node_t *key_node = yaml_document_get_node(document, pair->key);
@@ -254,6 +256,7 @@ static gw_status parse_channel(yaml_document_t *document, yaml_node_t *node,
 #undef READ_CHANNEL_INT
 
     {
+        /* Expansion uses a separate buffer because in-place replacement is unsafe. */
         char expanded[GW_URL_CAP];
         status = gw_expand_environment(channel->input.url, expanded, sizeof(expanded),
                                        error);
@@ -450,6 +453,7 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
                   "timeouts/backoff must be positive and max_retries non-negative");
         return GW_ERR_VALIDATION;
     }
+    /* Parsing checks representation; this pass enforces gateway-specific policy. */
     for (index = 0U; index < config->channel_count; ++index) {
         const gw_channel_config *channel = &config->channels[index];
         if (!valid_identifier(channel->id)) {

@@ -1,3 +1,4 @@
+/* Pure channel state transitions and bounded exponential retry scheduling. */
 #include "gateway/channel_state.h"
 
 #include <stdarg.h>
@@ -39,6 +40,7 @@ static int calculate_backoff(unsigned int failures, int maximum)
     unsigned int step;
     int delay = 1;
 
+    /* Produce 1, 2, 4, ... seconds without overflowing past the configured cap. */
     for (step = 1U; step < failures && delay < maximum; ++step) {
         if (delay > maximum / 2) {
             delay = maximum;
@@ -95,6 +97,7 @@ gw_status gw_channel_transition(gw_channel_runtime *runtime,
         return GW_ERR_ARGUMENT;
     }
 
+    /* State mutation is centralized here so supervisors cannot skip invariants. */
     switch (event) {
     case GW_CHANNEL_EVENT_ENABLE:
         if (runtime->state != GW_CHANNEL_DISABLED) {

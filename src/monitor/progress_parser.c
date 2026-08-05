@@ -1,3 +1,4 @@
+/* Incrementally assemble and decode FFmpeg key=value progress records. */
 #include "gateway/progress_parser.h"
 
 #include <errno.h>
@@ -106,6 +107,7 @@ static bool parse_line(gw_progress_parser *parser, char *line,
     } else if (strcmp(key, "speed") == 0) {
         parse_double_value(value, &parser->current.speed);
     } else if (strcmp(key, "progress") == 0) {
+        /* progress= terminates one record and publishes an immutable snapshot. */
         copy_truncated(parser->current.status, sizeof(parser->current.status), value);
         *snapshot = parser->current;
         memset(&parser->current, 0, sizeof(parser->current));
@@ -127,6 +129,7 @@ gw_status gw_progress_parser_consume(gw_progress_parser *parser,
         return GW_ERR_ARGUMENT;
     }
     *completed = false;
+    /* Pipe reads may split anywhere, so retain bytes until a newline is observed. */
     for (index = 0U; index < data_length; ++index) {
         char byte = data[index];
         if (byte == '\n') {

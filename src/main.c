@@ -1,3 +1,4 @@
+/* Single-channel CLI, worker supervision loop, progress reporting, and retries. */
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/channel_state.h"
@@ -18,6 +19,7 @@
 
 #define STDERR_LINE_CAP 4096U
 
+/* Signal handlers only publish intent; all cleanup remains in normal control flow. */
 static volatile sig_atomic_t stop_requested;
 
 typedef struct {
@@ -27,6 +29,7 @@ typedef struct {
 } stderr_line_buffer;
 
 typedef enum {
+    /* One attempt ends with exactly one supervisor-relevant outcome. */
     ATTEMPT_PENDING = 0,
     ATTEMPT_CLEAN_EXIT,
     ATTEMPT_WORKER_FAILURE,
@@ -234,6 +237,7 @@ static worker_attempt_result run_worker_attempt(
     struct timespec last_progress_at;
     gw_status status;
 
+    /* This function owns argv, child process, and pipes for exactly one attempt. */
     attempt.outcome = ATTEMPT_INTERNAL_ERROR;
     attempt.exit_code = -1;
     status = gw_pipeline_build(channel, &config->mediamtx, ffmpeg_binary, &arguments,
@@ -274,6 +278,7 @@ static worker_attempt_result run_worker_attempt(
     printf("channel=%s pid=%ld state=%s command=%s\n", channel->id,
            (long)process.pid, gw_channel_state_string(runtime->state), command);
 
+    /* Drain both pipes even after waitpid reports exit; buffered output may remain. */
     while (!exited || process.stdout_fd >= 0 || process.stderr_fd >= 0) {
         struct pollfd descriptors[2];
         int poll_result;
@@ -379,6 +384,7 @@ static worker_attempt_result run_worker_attempt(
         if (!exited && attempt.outcome == ATTEMPT_PENDING) {
             worker_attempt_outcome timeout_outcome = ATTEMPT_PENDING;
 
+            /* Startup waits for the first record; RUNNING requires recurring records. */
             if (!received_progress &&
                 timeout_elapsed(&started_at,
                                 config->defaults.startup_timeout_sec)) {
@@ -404,6 +410,7 @@ static worker_attempt_result run_worker_attempt(
         }
     }
 
+    /* Every exit path below the loop converges on process and argv cleanup. */
     if (process.running) {
         status = gw_process_stop(&process, stop_timeout_ms(config), &error);
         if (status != GW_OK) {
@@ -436,6 +443,7 @@ static bool wait_for_backoff(int backoff_sec)
     if (!monotonic_now(&started_at)) {
         return false;
     }
+    /* Sleep in short intervals so service termination interrupts backoff promptly. */
     while (!timeout_elapsed(&started_at, backoff_sec)) {
         if (stop_requested != 0) {
             return false;
@@ -461,6 +469,7 @@ static int supervise_channel(const gw_config *config,
         return 1;
     }
 
+    /* Each loop iteration is one worker attempt followed by stop, fail, or retry. */
     for (;;) {
         worker_attempt_result attempt;
 
@@ -497,6 +506,7 @@ static int supervise_channel(const gw_config *config,
             return 0;
         }
 
+        /* All non-clean outcomes consume retry budget through the state machine. */
         status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_FAILURE,
                                        &config->defaults, &error);
         if (status != GW_OK) {
@@ -580,6 +590,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    /* Every mode loads and validates configuration before choosing its behavior. */
     status = gw_config_load_file(config_path, &config, &error);
     if (status != GW_OK) {
         fprintf(stderr, "Configuration error (%s): %s\n",
@@ -591,6 +602,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (dry_run) {
+        /* Dry-run builds the exact argv but never creates a worker process. */
         for (index = 0U; index < config.channel_count; ++index) {
         const gw_channel_config *channel = &config.channels[index];
         gw_pipeline_argv arguments;
@@ -632,6 +644,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "No enabled channel is configured.\n");
             return 1;
         }
+        /* The current supervisor intentionally owns one enabled channel only. */
         if (enabled_count > 1U) {
             fprintf(stderr,
                     "This milestone supports one enabled channel; configured=%zu.\n",

@@ -1,3 +1,4 @@
+/* POSIX worker creation, nonblocking output capture, termination, and reaping. */
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/process_manager.h"
@@ -49,6 +50,7 @@ static gw_status configure_pipe(int descriptors[2], gw_error *error)
     int flags;
     int index;
 
+    /* Prevent unrelated descriptors from leaking through exec in the child. */
     for (index = 0; index < 2; ++index) {
         flags = fcntl(descriptors[index], F_GETFD);
         if (flags < 0 || fcntl(descriptors[index], F_SETFD, flags | FD_CLOEXEC) < 0) {
@@ -57,6 +59,7 @@ static gw_status configure_pipe(int descriptors[2], gw_error *error)
             return GW_ERR_IO;
         }
     }
+    /* Only the parent read end is nonblocking; the worker keeps normal writes. */
     flags = fcntl(descriptors[0], F_GETFL);
     if (flags < 0 || fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) < 0) {
         set_error(error, GW_ERR_IO, "cannot make worker pipe nonblocking: %s",
@@ -166,6 +169,7 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
         goto fail;
     }
     attributes_initialized = true;
+    /* A dedicated process group lets stop/kill include any FFmpeg descendants. */
     result = posix_spawnattr_setflags(&attributes, flags);
     if (result == 0) {
         result = posix_spawnattr_setpgroup(&attributes, 0);
@@ -176,6 +180,7 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
         goto fail;
     }
 
+    /* Execute argv directly; no shell parses configuration-derived arguments. */
     result = posix_spawnp(&child_pid, arguments[0], &actions, &attributes, arguments,
                           environ);
     if (result != 0) {
@@ -287,6 +292,7 @@ gw_status gw_process_poll_exit(gw_process *process, bool *exited, gw_error *erro
         return GW_ERR_VALIDATION;
     }
 
+    /* Reaping is part of polling so a reported exit cannot leave a zombie. */
     result = waitpid(process->pid, &process->wait_status, WNOHANG);
     if (result == 0) {
         *exited = false;
@@ -372,6 +378,7 @@ gw_status gw_process_stop(gw_process *process, int timeout_ms, gw_error *error)
         return GW_ERR_VALIDATION;
     }
 
+    /* Negative PID targets the worker's entire process group. */
     if (kill(-process->pid, SIGTERM) < 0 && errno != ESRCH) {
         set_error(error, GW_ERR_IO, "cannot terminate worker process group: %s",
                   strerror(errno));
@@ -390,6 +397,7 @@ gw_status gw_process_stop(gw_process *process, int timeout_ms, gw_error *error)
     if (status != GW_OK || exited) {
         return status;
     }
+    /* Escalate only after the graceful deadline expires. */
     if (kill(-process->pid, SIGKILL) < 0 && errno != ESRCH) {
         set_error(error, GW_ERR_IO, "cannot kill worker process group: %s",
                   strerror(errno));

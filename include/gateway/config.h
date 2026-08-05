@@ -1,10 +1,13 @@
 #ifndef GATEWAY_CONFIG_H
 #define GATEWAY_CONFIG_H
 
+/* Public configuration model and helpers shared by all gateway modules. */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
+/* String capacities include space for the terminating null byte. */
 #define GW_MAX_CHANNELS 64U
 #define GW_ID_CAP 65U
 #define GW_URL_CAP 2048U
@@ -23,6 +26,7 @@ typedef enum {
     GW_ERR_OVERFLOW
 } gw_status;
 
+/* Optional diagnostic returned alongside a gw_status value. */
 typedef struct {
     gw_status code;
     char message[GW_ERROR_CAP];
@@ -80,12 +84,23 @@ typedef struct {
     size_t channel_count;
 } gw_config;
 
+/* Initialize a configuration with safe local defaults. */
 void gw_config_init(gw_config *config);
+
+/* Load, expand, and validate a YAML file. config is usable only on GW_OK. */
 gw_status gw_config_load_file(const char *path, gw_config *config, gw_error *error);
+
+/* Validate an already-populated configuration against gateway policy. */
 gw_status gw_config_validate(const gw_config *config, gw_error *error);
+
+/* Expand ${NAME} references into a separate caller-owned output buffer. */
 gw_status gw_expand_environment(const char *input, char *output, size_t output_size,
                                 gw_error *error);
+
+/* Copy a URL for diagnostics while replacing any password with "***". */
 gw_status gw_redact_url(const char *url, char *output, size_t output_size);
+
+/* Return a stable human-readable name for a status code. */
 const char *gw_status_string(gw_status status);
 
 #endif

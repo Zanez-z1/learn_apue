@@ -325,6 +325,7 @@ CTest 中与 Phase 2 相关的测试：
 ```text
 gateway_channel_state_tests
 gateway_probe_tests
+gateway_supervisor_tests
 gateway_process_tests
 gateway_single_channel_test
 gateway_stable_run_test
@@ -365,6 +366,12 @@ gateway_probe_retry_exhaustion_test
 - 超时后使用 `SIGKILL` 并回收进程。
 - 不存在的可执行文件能够明确报错。
 
+`gateway_supervisor_tests` 直接链接 `gateway_core` 中的 supervisor 模块，验证：
+
+- ffprobe 和 FFmpeg 默认可执行文件名称。
+- 空配置、空通道和空可执行文件名称被公共接口拒绝。
+- CLI 注入的停止信号能够在 `PROBING` 阶段终止并回收探测进程，最终正常停止。
+
 `gateway_single_channel_test` 验证：
 
 - 配置加载、ffprobe 探测、FFmpeg 参数构造和进程创建的完整调用链。
@@ -398,10 +405,11 @@ gateway_probe_retry_exhaustion_test
 日期：2026-08-05
 测试机器：x86_64 开发机
 测试方式：假工作进程集成测试
-结果：PASS（真实输入探测执行增量，常规与 ASan/UBSan 均为 13/13 通过）
+结果：PASS（独立 supervisor 模块增量，常规与 ASan/UBSan 均为 14/14 通过）
 覆盖：创建、双管道、退出检测、SIGTERM、SIGKILL、回收、日志密码脱敏、
       ffprobe 成功/失败/超时/编码不匹配、状态机、启动超时、progress 超时、
-      稳定窗口、探测及工作进程退避重试、重试耗尽
+      稳定窗口、探测及工作进程退避重试、重试耗尽、supervisor 参数契约和
+      探测阶段外部停止
 限制：开发机使用 ffprobe/FFmpeg 夹具，尚未连接真实 RTSP、Rockchip FFmpeg 或
       MediaMTX，不代表完整 Phase 2 通过
 ```

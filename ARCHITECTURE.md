@@ -407,9 +407,9 @@ rk3588-media-gateway/
 ├── include/
 │   └── gateway/
 ├── src/
-│   ├── main.c
+│   ├── main.c                 # CLI、配置入口和进程级信号处理
 │   ├── config/
-│   ├── channel/
+│   ├── channel/               # 通道状态机和单通道 supervisor
 │   ├── pipeline/
 │   ├── process/
 │   ├── monitor/

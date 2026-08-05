@@ -13,6 +13,7 @@ pkg_check_modules(LIBYAML REQUIRED IMPORTED_TARGET yaml-0.1)
 
 add_library(gateway_core
     src/channel/channel_state.c
+    src/channel/supervisor.c
     src/config/config.c
     src/pipeline/pipeline_builder.c
     src/monitor/progress_parser.c
@@ -59,6 +60,14 @@ if(GATEWAY_BUILD_TESTS)
     add_executable(gateway_process_fixture tests/integration/process_fixture.c)
     target_compile_options(gateway_process_fixture PRIVATE
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+
+    add_executable(gateway_supervisor_tests tests/unit/supervisor_tests.c)
+    target_link_libraries(gateway_supervisor_tests PRIVATE gateway_core)
+    target_compile_options(gateway_supervisor_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_supervisor_tests
+        COMMAND gateway_supervisor_tests $<TARGET_FILE:gateway_process_fixture>)
+    set_tests_properties(gateway_supervisor_tests PROPERTIES TIMEOUT 5)
 
     add_executable(gateway_process_tests tests/integration/process_manager_tests.c)
     target_link_libraries(gateway_process_tests PRIVATE gateway_core)

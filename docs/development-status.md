@@ -52,8 +52,8 @@ git status --short --branch
 日期：2026-08-05
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：13/13 PASS
-ASan/UBSan：13/13 PASS
+常规 CTest：14/14 PASS
+ASan/UBSan：14/14 PASS
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 ```
@@ -92,7 +92,7 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - 支持 LF 与 CRLF 输出，拒绝缺失或非法字段。
 - 校验 H.264/H.265 探测结果与配置的 RKMpp 解码器是否匹配。
 
-### 本次增量：真实输入探测执行链路
+### 4034726：真实输入探测执行链路
 
 - supervisor 在每次启动或重试 FFmpeg 前执行独立 ffprobe 子进程。
 - 新增 `probe_timeout_sec`，与 FFmpeg 的 `startup_timeout_sec` 分开计时。
@@ -101,6 +101,16 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - 探测失败使用现有退避及最大重试预算；探测成功后才从 `PROBING` 进入
   `STARTING`。
 - 假 ffprobe 端到端覆盖成功、失败、超时、编码不匹配和重试耗尽。
+
+### 本次增量：独立 supervisor 模块
+
+- 将探测、工作进程监督、progress 处理、超时、退避和重试从 `main.c` 迁入
+  `src/channel/supervisor.c`。
+- 新增 `include/gateway/supervisor.h`，由 CLI 注入 ffprobe/FFmpeg 路径和只读停止
+  信号；supervisor 不再安装或拥有进程级信号处理器。
+- `main.c` 只负责参数解析、配置加载、dry-run、单通道选择和发布停止信号。
+- 新增 supervisor 公共接口测试，覆盖默认选项、非法参数和探测阶段停止/回收。
+- 原有 13 项端到端与模块测试保持行为不变，当前总计 14 项。
 
 ## 5. 当前能力边界
 
@@ -125,9 +135,8 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 
 按顺序执行：
 
-1. 将 supervisor 从 `main.c` 拆分为独立通道模块，保持当前行为和 13 项测试不变。
-2. 完成单通道状态快照，为 HTTP 查询接口准备稳定数据模型。
-3. 进入多通道管理与配置重载。
+1. 完成单通道状态快照，为 HTTP 查询接口准备稳定数据模型。
+2. 进入多通道管理与配置重载。
 
 ## 7. 文档职责
 

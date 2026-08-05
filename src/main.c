@@ -232,9 +232,11 @@ static worker_attempt_result run_worker_attempt(
     stderr_line_buffer stderr_lines = {0};
     char command[8192];
     bool received_progress = false;
+    bool stable_reported = false;
     bool exited = false;
     struct timespec started_at;
     struct timespec last_progress_at;
+    struct timespec running_since;
     gw_status status;
 
     /* This function owns argv, child process, and pipes for exactly one attempt. */
@@ -339,6 +341,7 @@ static worker_attempt_result run_worker_attempt(
                 }
                 if (!received_progress) {
                     received_progress = true;
+                    running_since = last_progress_at;
                     status = gw_channel_transition(runtime, GW_CHANNEL_EVENT_PROGRESS,
                                                    &config->defaults, &error);
                     if (status != GW_OK) {
@@ -379,6 +382,23 @@ static worker_attempt_result run_worker_attempt(
                         error.message);
                 break;
             }
+        }
+
+        if (!exited && received_progress && !stable_reported &&
+            timeout_elapsed(&running_since, config->defaults.stable_run_sec)) {
+            status = gw_channel_transition(runtime, GW_CHANNEL_EVENT_STABLE,
+                                           &config->defaults, &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                        error.message);
+                attempt.outcome = ATTEMPT_INTERNAL_ERROR;
+                break;
+            }
+            stable_reported = true;
+            printf("channel=%s pid=%ld state=%s event=stable failures=%u\n",
+                   channel->id, (long)process.pid,
+                   gw_channel_state_string(runtime->state),
+                   runtime->consecutive_failures);
         }
 
         if (!exited && attempt.outcome == ATTEMPT_PENDING) {

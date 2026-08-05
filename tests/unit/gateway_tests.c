@@ -75,6 +75,9 @@ static void test_validation(void)
     config.channel_count = 1U;
     make_channel(&config.channels[0]);
     CHECK(gw_config_validate(&config, &error) == GW_OK);
+    config.defaults.stable_run_sec = 0;
+    CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
+    config.defaults.stable_run_sec = 60;
     snprintf(config.channels[0].id, sizeof(config.channels[0].id), "%s", "bad/id");
     CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
 }
@@ -89,6 +92,7 @@ static void test_config_loader(void)
     snprintf(path, sizeof(path), "%s/config/gateway.example.yaml", GW_TEST_SOURCE_DIR);
     CHECK(gw_config_load_file(path, &config, &error) == GW_OK);
     CHECK(config.channel_count == 1U);
+    CHECK(config.defaults.stable_run_sec == 60);
     CHECK(strcmp(config.channels[0].id, "cam01") == 0);
     CHECK(strcmp(config.channels[0].input.url,
                  "rtsp://user:password@camera/live") == 0);

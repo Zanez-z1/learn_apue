@@ -44,6 +44,7 @@ typedef struct {
 typedef struct {
     int startup_timeout_sec;
     int progress_timeout_sec;
+    int stable_run_sec;
     int stop_timeout_sec;
     int max_retries;
     int max_backoff_sec;

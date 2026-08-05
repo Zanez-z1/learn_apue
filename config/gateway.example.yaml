@@ -8,6 +8,7 @@ mediamtx:
 defaults:
   startup_timeout_sec: 15
   progress_timeout_sec: 10
+  stable_run_sec: 60
   stop_timeout_sec: 5
   max_retries: 10
   max_backoff_sec: 30

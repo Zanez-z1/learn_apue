@@ -299,10 +299,10 @@ mediamtx --version
   状态转换。
 - 启动超时和 progress 停滞超时。
 - 指数退避、退避上限、最大重试次数和重试计数。
+- 连续运行达到 `stable_run_sec` 后清零连续失败次数。
 
 尚未实现：
 
-- 稳定运行一段时间后自动清零连续失败次数。
 - 独立的通道状态查询接口。
 - 真实输入探测（当前 `PROBING` 只表示进入启动前阶段）。
 
@@ -324,6 +324,7 @@ CTest 中与 Phase 2 相关的测试：
 gateway_channel_state_tests
 gateway_process_tests
 gateway_single_channel_test
+gateway_stable_run_test
 gateway_startup_timeout_test
 gateway_progress_timeout_test
 gateway_retry_exhaustion_test
@@ -353,6 +354,9 @@ gateway_retry_exhaustion_test
 - 工作进程 stderr 中出现源 URL 时，密码不会出现在网关日志中。
 - 工作进程退出后进入 `STOPPED`，退出码为 `0`。
 
+`gateway_stable_run_test` 持续发送 progress 超过 `stable_run_sec`，验证 supervisor
+产生 `event=stable`；状态机单元测试同时验证该事件会把连续失败次数从非零值清零。
+
 其余故障测试验证：
 
 - 未在 `startup_timeout_sec` 内收到 progress 时终止工作进程并记录
@@ -371,9 +375,9 @@ gateway_retry_exhaustion_test
 日期：2026-08-05
 测试机器：x86_64 开发机
 测试方式：假工作进程集成测试
-结果：PASS（单通道 supervisor 增量，7/7 测试通过）
+结果：PASS（单通道 supervisor 增量，8/8 测试通过）
 覆盖：创建、双管道、退出检测、SIGTERM、SIGKILL、回收、日志密码脱敏、
-      状态机、启动超时、progress 超时、退避重试、重试耗尽
+      状态机、启动超时、progress 超时、稳定窗口、退避重试、重试耗尽
 限制：尚未连接真实 FFmpeg/RTSP/MediaMTX，不代表完整 Phase 2 通过
 ```
 

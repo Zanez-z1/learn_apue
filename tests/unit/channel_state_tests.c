@@ -38,6 +38,7 @@ static void test_happy_path(void)
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_PROGRESS, &policy, &error) ==
           GW_OK);
     CHECK(runtime.state == GW_CHANNEL_RUNNING);
+    runtime.consecutive_failures = 2U;
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STABLE, &policy, &error) ==
           GW_OK);
     CHECK(runtime.consecutive_failures == 0U);

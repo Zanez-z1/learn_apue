@@ -69,6 +69,16 @@ if(GATEWAY_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION "state=STOPPED event=clean_exit exit_code=0"
         FAIL_REGULAR_EXPRESSION "fixture-password")
 
+    add_test(NAME gateway_stable_run_test
+        COMMAND gatewayd
+            --config ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
+            --ffmpeg-binary $<TARGET_FILE:gateway_process_fixture>)
+    set_tests_properties(gateway_stable_run_test PROPERTIES
+        TIMEOUT 5
+        ENVIRONMENT "GW_FIXTURE_MODE=steady"
+        PASS_REGULAR_EXPRESSION "event=stable failures=0"
+        FAIL_REGULAR_EXPRESSION "fixture-password")
+
     add_test(NAME gateway_startup_timeout_test
         COMMAND ${CMAKE_COMMAND}
             -DGATEWAY=$<TARGET_FILE:gatewayd>

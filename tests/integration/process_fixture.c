@@ -4,17 +4,34 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 int main(int argc, char **argv)
 {
     if (argc > 2) {
         const char *mode = getenv("GW_FIXTURE_MODE");
+        const struct timespec progress_interval = {
+            .tv_sec = 0,
+            .tv_nsec = 200000000L
+        };
         int index;
 
         if (mode != NULL && strcmp(mode, "no-progress") == 0) {
             for (;;) {
                 pause();
+            }
+        }
+        if (mode != NULL && strcmp(mode, "steady") == 0) {
+            int frame;
+
+            for (frame = 1; frame <= 8; ++frame) {
+                printf("frame=%d\nfps=25.0\nbitrate=4000kbits/s\n"
+                       "out_time_us=%d00000\ndrop_frames=0\nspeed=1.0x\n"
+                       "progress=continue\n",
+                       frame, frame * 2);
+                fflush(stdout);
+                nanosleep(&progress_interval, NULL);
             }
         }
         printf("frame=42\nfps=25.0\nbitrate=4000kbits/s\n"

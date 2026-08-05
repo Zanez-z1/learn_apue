@@ -169,6 +169,7 @@ void gw_config_init(gw_config *config)
                    "rtsp://127.0.0.1:8554");
     config->defaults.startup_timeout_sec = 15;
     config->defaults.progress_timeout_sec = 10;
+    config->defaults.stable_run_sec = 60;
     config->defaults.stop_timeout_sec = 5;
     config->defaults.max_retries = 10;
     config->defaults.max_backoff_sec = 30;
@@ -328,6 +329,7 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
         } while (0)
         READ_DEFAULT("startup_timeout_sec", startup_timeout_sec);
         READ_DEFAULT("progress_timeout_sec", progress_timeout_sec);
+        READ_DEFAULT("stable_run_sec", stable_run_sec);
         READ_DEFAULT("stop_timeout_sec", stop_timeout_sec);
         READ_DEFAULT("max_retries", max_retries);
         READ_DEFAULT("max_backoff_sec", max_backoff_sec);
@@ -447,6 +449,7 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
     }
     if (config->defaults.startup_timeout_sec <= 0 ||
         config->defaults.progress_timeout_sec <= 0 ||
+        config->defaults.stable_run_sec <= 0 ||
         config->defaults.stop_timeout_sec <= 0 || config->defaults.max_retries < 0 ||
         config->defaults.max_backoff_sec <= 0) {
         set_error(error, GW_ERR_VALIDATION,

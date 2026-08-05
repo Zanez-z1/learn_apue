@@ -289,6 +289,7 @@ mediamtx:
 defaults:
   startup_timeout_sec: 15
   progress_timeout_sec: 10
+  stable_run_sec: 60
   stop_timeout_sec: 5
   max_retries: 10
   max_backoff_sec: 30
@@ -312,6 +313,9 @@ channels:
 ```
 
 RTSP 用户名和密码通过 systemd `EnvironmentFile` 注入，不提交到 Git 仓库。
+
+`stable_run_sec` 表示通道持续稳定收到 progress 多久后，将连续失败次数清零；总重启
+次数不会因此清零。
 
 ## 10. 异常处理
 

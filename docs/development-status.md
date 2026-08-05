@@ -102,14 +102,6 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
   `STARTING`。
 - 假 ffprobe 端到端覆盖成功、失败、超时、编码不匹配和重试耗尽。
 
-### 开发停止钩子
-
-- `.codex/hooks/verify_project.py` 在开发回合结束前自动构建并运行 CTest。
-- 工作区存在功能代码改动时，要求同时修改 `docs/development-status.md` 和
-  `docs/test-plan.md`。
-- 已提交的最新功能增量也必须早于或等于两份开发者文档的最后提交，避免先提交代码
-  后遗漏阶段记录。
-
 ## 5. 当前能力边界
 
 已经具备：

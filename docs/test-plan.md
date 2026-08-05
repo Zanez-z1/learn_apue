@@ -406,18 +406,6 @@ gateway_probe_retry_exhaustion_test
       MediaMTX，不代表完整 Phase 2 通过
 ```
 
-### 5.3 开发停止钩子复测
-
-Codex 回合结束时，`.codex/hooks/verify_project.py` 自动检查：
-
-- 功能代码有未提交修改时，两份开发者 Markdown 也必须有修改。
-- 最新功能提交不能晚于任意一份开发者记录。
-- CMake 构建成功。
-- CTest 全部通过。
-
-手工复测可将符合 Stop hook 协议的 JSON 传给脚本。预期输出为
-`{"continue": true}`；缺少阶段文档或测试失败时则阻止结束并返回原因。
-
 通过标准：不手工执行 FFmpeg，通过 `gatewayd` 启停一路真实转码。
 
 ## 6. Phase 3：多通道与异常恢复

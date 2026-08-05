@@ -42,6 +42,7 @@ typedef struct {
 } gw_mediamtx_config;
 
 typedef struct {
+    int probe_timeout_sec;
     int startup_timeout_sec;
     int progress_timeout_sec;
     int stable_run_sec;

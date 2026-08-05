@@ -266,7 +266,8 @@ STOPPED ---- start ----> PROBING ---- success ----> STARTING
 - HTTP 线程：处理本地控制和查询请求。
 - 指标采样线程：周期读取 `/proc` 并更新进程资源数据。
 
-共享的通道注册表使用 `std::shared_mutex` 或普通互斥锁保护。耗时操作不能在持锁状态下执行，进程启动、停止和日志写入应在锁外完成。
+共享的通道注册表使用 POSIX 读写锁或普通互斥锁保护。耗时操作不能在持锁状态下执行，
+进程启动、停止和日志写入应在锁外完成。
 
 ## 9. 配置设计
 
@@ -287,6 +288,7 @@ mediamtx:
   publish_base_url: rtsp://127.0.0.1:8554
 
 defaults:
+  probe_timeout_sec: 10
   startup_timeout_sec: 15
   progress_timeout_sec: 10
   stable_run_sec: 60
@@ -313,6 +315,9 @@ channels:
 ```
 
 RTSP 用户名和密码通过 systemd `EnvironmentFile` 注入，不提交到 Git 仓库。
+
+`probe_timeout_sec` 限制每次 ffprobe 输入探测的最长时间；探测成功后才会进入
+FFmpeg 启动阶段。
 
 `stable_run_sec` 表示通道持续稳定收到 progress 多久后，将连续失败次数清零；总重启
 次数不会因此清零。

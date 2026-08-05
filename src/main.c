@@ -4,6 +4,7 @@
 #include "gateway/channel_state.h"
 #include "gateway/config.h"
 #include "gateway/pipeline_builder.h"
+#include "gateway/probe.h"
 #include "gateway/process_manager.h"
 #include "gateway/progress_parser.h"
 
@@ -18,6 +19,7 @@
 #include <time.h>
 
 #define STDERR_LINE_CAP 4096U
+#define PROBE_OUTPUT_CAP 1024U
 
 /* Signal handlers only publish intent; all cleanup remains in normal control flow. */
 static volatile sig_atomic_t stop_requested;
@@ -45,6 +47,22 @@ typedef struct {
     gw_worker_progress progress;
 } worker_attempt_result;
 
+typedef enum {
+    PROBE_ATTEMPT_PENDING = 0,
+    PROBE_ATTEMPT_SUCCEEDED,
+    PROBE_ATTEMPT_FAILURE,
+    PROBE_ATTEMPT_TIMEOUT,
+    PROBE_ATTEMPT_MISMATCH,
+    PROBE_ATTEMPT_STOP_REQUESTED,
+    PROBE_ATTEMPT_INTERNAL_ERROR
+} probe_attempt_outcome;
+
+typedef struct {
+    probe_attempt_outcome outcome;
+    int exit_code;
+    gw_probe_info info;
+} probe_attempt_result;
+
 static void handle_stop_signal(int signal_number)
 {
     stop_requested = signal_number;
@@ -64,7 +82,7 @@ static bool install_signal_handlers(void)
 static void print_usage(const char *program)
 {
     printf("Usage: %s --config PATH [--check-config | --dry-run] "
-           "[--ffmpeg-binary PATH]\n",
+           "[--ffprobe-binary PATH] [--ffmpeg-binary PATH]\n",
            program);
 }
 
@@ -107,20 +125,23 @@ static bool redact_source_url(const char *line, const char *source_url,
     return append_text(output, capacity, &output_length, cursor, strlen(cursor));
 }
 
-static void emit_stderr_line(const char *channel_id, const char *source_url,
-                             const char *line)
+static void emit_stderr_line(const char *channel_id, const char *component,
+                             const char *source_url, const char *line)
 {
     char redacted[STDERR_LINE_CAP];
 
     if (redact_source_url(line, source_url, redacted, sizeof(redacted))) {
-        fprintf(stderr, "channel=%s worker_stderr=%s\n", channel_id, redacted);
+        fprintf(stderr, "channel=%s %s_stderr=%s\n", channel_id, component,
+                redacted);
     } else {
-        fprintf(stderr, "channel=%s worker_stderr=[line omitted]\n", channel_id);
+        fprintf(stderr, "channel=%s %s_stderr=[line omitted]\n", channel_id,
+                component);
     }
 }
 
 static void consume_stderr(stderr_line_buffer *lines, const char *data,
-                           size_t data_length, const gw_channel_config *channel)
+                           size_t data_length, const gw_channel_config *channel,
+                           const char *component)
 {
     size_t index;
 
@@ -129,8 +150,8 @@ static void consume_stderr(stderr_line_buffer *lines, const char *data,
         if (lines->dropping) {
             if (byte == '\n') {
                 lines->dropping = false;
-                fprintf(stderr, "channel=%s worker_stderr=[overlong line omitted]\n",
-                        channel->id);
+                fprintf(stderr, "channel=%s %s_stderr=[overlong line omitted]\n",
+                        channel->id, component);
             }
             continue;
         }
@@ -139,7 +160,8 @@ static void consume_stderr(stderr_line_buffer *lines, const char *data,
                 --lines->length;
             }
             lines->data[lines->length] = '\0';
-            emit_stderr_line(channel->id, channel->input.url, lines->data);
+            emit_stderr_line(channel->id, component, channel->input.url,
+                             lines->data);
             lines->length = 0U;
             continue;
         }
@@ -153,14 +175,14 @@ static void consume_stderr(stderr_line_buffer *lines, const char *data,
 }
 
 static void flush_stderr(stderr_line_buffer *lines,
-                         const gw_channel_config *channel)
+                         const gw_channel_config *channel, const char *component)
 {
     if (lines->dropping) {
-        fprintf(stderr, "channel=%s worker_stderr=[overlong line omitted]\n",
-                channel->id);
+        fprintf(stderr, "channel=%s %s_stderr=[overlong line omitted]\n",
+                channel->id, component);
     } else if (lines->length > 0U) {
         lines->data[lines->length] = '\0';
-        emit_stderr_line(channel->id, channel->input.url, lines->data);
+        emit_stderr_line(channel->id, component, channel->input.url, lines->data);
     }
     lines->length = 0U;
     lines->dropping = false;
@@ -217,6 +239,207 @@ static const char *attempt_event_string(worker_attempt_outcome outcome)
         break;
     }
     return "unknown";
+}
+
+static const char *probe_attempt_event_string(probe_attempt_outcome outcome)
+{
+    switch (outcome) {
+    case PROBE_ATTEMPT_SUCCEEDED:
+        return "probe_succeeded";
+    case PROBE_ATTEMPT_FAILURE:
+        return "probe_failure";
+    case PROBE_ATTEMPT_TIMEOUT:
+        return "probe_timeout";
+    case PROBE_ATTEMPT_MISMATCH:
+        return "probe_mismatch";
+    case PROBE_ATTEMPT_STOP_REQUESTED:
+        return "stop_requested";
+    case PROBE_ATTEMPT_INTERNAL_ERROR:
+        return "internal_error";
+    case PROBE_ATTEMPT_PENDING:
+        break;
+    }
+    return "unknown";
+}
+
+static probe_attempt_result run_probe_attempt(
+    const gw_config *config, const gw_channel_config *channel,
+    const char *ffprobe_binary)
+{
+    probe_attempt_result attempt = {0};
+    gw_probe_argv arguments;
+    gw_process process;
+    gw_error error = {0};
+    stderr_line_buffer stderr_lines = {0};
+    char output[PROBE_OUTPUT_CAP] = {0};
+    size_t output_length = 0U;
+    bool exited = false;
+    struct timespec started_at;
+    gw_status status;
+
+    attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+    attempt.exit_code = -1;
+    status = gw_probe_build(channel, ffprobe_binary, &arguments, &error);
+    if (status != GW_OK) {
+        fprintf(stderr, "channel=%s probe command error (%s): %s\n", channel->id,
+                gw_status_string(status), error.message);
+        return attempt;
+    }
+
+    gw_process_init(&process);
+    status = gw_process_start(&process, arguments.items, &error);
+    if (status != GW_OK) {
+        fprintf(stderr, "channel=%s probe start error (%s): %s\n", channel->id,
+                gw_status_string(status), error.message);
+        gw_probe_argv_free(&arguments);
+        attempt.outcome = PROBE_ATTEMPT_FAILURE;
+        return attempt;
+    }
+    if (!monotonic_now(&started_at)) {
+        fprintf(stderr, "channel=%s probe clock error: %s\n", channel->id,
+                strerror(errno));
+        gw_process_stop(&process, stop_timeout_ms(config), &error);
+        gw_process_close(&process, &error);
+        gw_probe_argv_free(&arguments);
+        return attempt;
+    }
+
+    attempt.outcome = PROBE_ATTEMPT_PENDING;
+    printf("channel=%s pid=%ld state=PROBING event=probe_started\n", channel->id,
+           (long)process.pid);
+    while (!exited || process.stdout_fd >= 0 || process.stderr_fd >= 0) {
+        struct pollfd descriptors[2];
+        int poll_result;
+
+        if (stop_requested != 0 && attempt.outcome == PROBE_ATTEMPT_PENDING &&
+            !exited) {
+            status = gw_process_stop(&process, stop_timeout_ms(config), &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s probe stop error: %s\n", channel->id,
+                        error.message);
+                attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+                break;
+            }
+            attempt.outcome = PROBE_ATTEMPT_STOP_REQUESTED;
+            exited = true;
+        }
+
+        descriptors[0].fd = process.stdout_fd;
+        descriptors[0].events = POLLIN | POLLHUP;
+        descriptors[0].revents = 0;
+        descriptors[1].fd = process.stderr_fd;
+        descriptors[1].events = POLLIN | POLLHUP;
+        descriptors[1].revents = 0;
+        poll_result = poll(descriptors, 2, 250);
+        if (poll_result < 0 && errno != EINTR) {
+            fprintf(stderr, "channel=%s probe poll error: %s\n", channel->id,
+                    strerror(errno));
+            attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+            break;
+        }
+
+        if (descriptors[0].revents != 0) {
+            char buffer[256];
+            size_t bytes_read;
+            bool end_of_stream;
+
+            status = gw_process_read(&process, GW_PROCESS_STDOUT, buffer,
+                                     sizeof(buffer), &bytes_read, &end_of_stream,
+                                     &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s probe stdout error: %s\n", channel->id,
+                        error.message);
+                attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+                break;
+            }
+            if (memchr(buffer, '\0', bytes_read) != NULL ||
+                !append_text(output, sizeof(output), &output_length, buffer,
+                             bytes_read)) {
+                fprintf(stderr, "channel=%s probe output is invalid or too large\n",
+                        channel->id);
+                attempt.outcome = PROBE_ATTEMPT_FAILURE;
+                break;
+            }
+        }
+        if (descriptors[1].revents != 0) {
+            char buffer[2048];
+            size_t bytes_read;
+            bool end_of_stream;
+
+            status = gw_process_read(&process, GW_PROCESS_STDERR, buffer,
+                                     sizeof(buffer), &bytes_read, &end_of_stream,
+                                     &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s probe stderr error: %s\n", channel->id,
+                        error.message);
+                attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+                break;
+            }
+            consume_stderr(&stderr_lines, buffer, bytes_read, channel, "probe");
+            if (end_of_stream) {
+                flush_stderr(&stderr_lines, channel, "probe");
+            }
+        }
+
+        if (!exited) {
+            status = gw_process_poll_exit(&process, &exited, &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s probe wait error: %s\n", channel->id,
+                        error.message);
+                attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+                break;
+            }
+        }
+        if (!exited && attempt.outcome == PROBE_ATTEMPT_PENDING &&
+            timeout_elapsed(&started_at, config->defaults.probe_timeout_sec)) {
+            status = gw_process_stop(&process, stop_timeout_ms(config), &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s probe timeout cleanup error: %s\n",
+                        channel->id, error.message);
+                attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+                break;
+            }
+            attempt.outcome = PROBE_ATTEMPT_TIMEOUT;
+            exited = true;
+        }
+    }
+
+    if (process.running) {
+        status = gw_process_stop(&process, stop_timeout_ms(config), &error);
+        if (status != GW_OK) {
+            fprintf(stderr, "channel=%s probe cleanup error: %s\n", channel->id,
+                    error.message);
+            attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+        }
+    }
+    if (process.reaped) {
+        attempt.exit_code = gw_process_exit_code(&process);
+        if (attempt.outcome == PROBE_ATTEMPT_PENDING) {
+            if (attempt.exit_code != 0) {
+                attempt.outcome = PROBE_ATTEMPT_FAILURE;
+            } else {
+                status = gw_probe_parse(output, &attempt.info, &error);
+                if (status != GW_OK) {
+                    fprintf(stderr, "channel=%s probe parse error (%s): %s\n",
+                            channel->id, gw_status_string(status), error.message);
+                    attempt.outcome = PROBE_ATTEMPT_FAILURE;
+                } else if (!gw_probe_matches_decoder(&attempt.info,
+                                                     channel->video.decoder)) {
+                    attempt.outcome = PROBE_ATTEMPT_MISMATCH;
+                } else {
+                    attempt.outcome = PROBE_ATTEMPT_SUCCEEDED;
+                }
+            }
+        }
+    }
+    status = gw_process_close(&process, &error);
+    if (status != GW_OK) {
+        fprintf(stderr, "channel=%s probe close error: %s\n", channel->id,
+                error.message);
+        attempt.outcome = PROBE_ATTEMPT_INTERNAL_ERROR;
+    }
+    gw_probe_argv_free(&arguments);
+    return attempt;
 }
 
 static worker_attempt_result run_worker_attempt(
@@ -369,9 +592,9 @@ static worker_attempt_result run_worker_attempt(
                         error.message);
                 break;
             }
-            consume_stderr(&stderr_lines, buffer, bytes_read, channel);
+            consume_stderr(&stderr_lines, buffer, bytes_read, channel, "worker");
             if (end_of_stream) {
-                flush_stderr(&stderr_lines, channel);
+                flush_stderr(&stderr_lines, channel, "worker");
             }
         }
 
@@ -475,6 +698,7 @@ static bool wait_for_backoff(int backoff_sec)
 
 static int supervise_channel(const gw_config *config,
                              const gw_channel_config *channel,
+                             const char *ffprobe_binary,
                              const char *ffmpeg_binary)
 {
     gw_channel_runtime runtime;
@@ -489,24 +713,18 @@ static int supervise_channel(const gw_config *config,
         return 1;
     }
 
-    /* Each loop iteration is one worker attempt followed by stop, fail, or retry. */
+    /* Each loop iteration probes, starts one worker attempt, then stops or retries. */
     for (;;) {
-        worker_attempt_result attempt;
+        probe_attempt_result probe;
+        worker_attempt_result attempt = {0};
+        const char *failure_event;
+        int failure_exit_code;
 
         printf("channel=%s state=%s restart_count=%llu\n", channel->id,
                gw_channel_state_string(runtime.state),
                (unsigned long long)runtime.total_restarts);
-        status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_PROBE_SUCCEEDED,
-                                       &config->defaults, &error);
-        if (status != GW_OK) {
-            fprintf(stderr, "channel=%s state error: %s\n", channel->id,
-                    error.message);
-            return 1;
-        }
-
-        attempt = run_worker_attempt(config, channel, ffmpeg_binary, &runtime);
-        if (attempt.outcome == ATTEMPT_CLEAN_EXIT ||
-            attempt.outcome == ATTEMPT_STOP_REQUESTED) {
+        probe = run_probe_attempt(config, channel, ffprobe_binary);
+        if (probe.outcome == PROBE_ATTEMPT_STOP_REQUESTED) {
             status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
                                            &config->defaults, &error);
             if (status != GW_OK) {
@@ -514,16 +732,59 @@ static int supervise_channel(const gw_config *config,
                         error.message);
                 return 1;
             }
-            printf("channel=%s state=%s event=%s exit_code=%d frame=%llu fps=%.2f "
-                   "bitrate=%s drop_frames=%llu speed=%.3f restart_count=%llu\n",
+            printf("channel=%s state=%s event=stop_requested restart_count=%llu\n",
                    channel->id, gw_channel_state_string(runtime.state),
-                   attempt_event_string(attempt.outcome), attempt.exit_code,
-                   (unsigned long long)attempt.progress.frame, attempt.progress.fps,
-                   attempt.progress.bitrate,
-                   (unsigned long long)attempt.progress.drop_frames,
-                   attempt.progress.speed,
                    (unsigned long long)runtime.total_restarts);
             return 0;
+        }
+        if (probe.outcome == PROBE_ATTEMPT_SUCCEEDED) {
+            printf("channel=%s state=PROBING event=probe_succeeded codec=%s "
+                   "width=%d height=%d\n",
+                   channel->id, probe.info.codec_name, probe.info.width,
+                   probe.info.height);
+            status = gw_channel_transition(&runtime,
+                                           GW_CHANNEL_EVENT_PROBE_SUCCEEDED,
+                                           &config->defaults, &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                        error.message);
+                return 1;
+            }
+
+            attempt = run_worker_attempt(config, channel, ffmpeg_binary, &runtime);
+            if (attempt.outcome == ATTEMPT_CLEAN_EXIT ||
+                attempt.outcome == ATTEMPT_STOP_REQUESTED) {
+                status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
+                                               &config->defaults, &error);
+                if (status != GW_OK) {
+                    fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                            error.message);
+                    return 1;
+                }
+                printf("channel=%s state=%s event=%s exit_code=%d frame=%llu "
+                       "fps=%.2f bitrate=%s drop_frames=%llu speed=%.3f "
+                       "restart_count=%llu\n",
+                       channel->id, gw_channel_state_string(runtime.state),
+                       attempt_event_string(attempt.outcome), attempt.exit_code,
+                       (unsigned long long)attempt.progress.frame,
+                       attempt.progress.fps, attempt.progress.bitrate,
+                       (unsigned long long)attempt.progress.drop_frames,
+                       attempt.progress.speed,
+                       (unsigned long long)runtime.total_restarts);
+                return 0;
+            }
+            failure_event = attempt_event_string(attempt.outcome);
+            failure_exit_code = attempt.exit_code;
+        } else {
+            failure_event = probe_attempt_event_string(probe.outcome);
+            failure_exit_code = probe.exit_code;
+            if (probe.outcome == PROBE_ATTEMPT_MISMATCH) {
+                fprintf(stderr,
+                        "channel=%s state=PROBING event=probe_mismatch codec=%s "
+                        "decoder=%s\n",
+                        channel->id, probe.info.codec_name,
+                        channel->video.decoder);
+            }
         }
 
         /* All non-clean outcomes consume retry budget through the state machine. */
@@ -539,8 +800,7 @@ static int supervise_channel(const gw_config *config,
                     "channel=%s state=%s event=%s exit_code=%d failures=%u "
                     "restart_count=%llu\n",
                     channel->id, gw_channel_state_string(runtime.state),
-                    attempt_event_string(attempt.outcome), attempt.exit_code,
-                    runtime.consecutive_failures,
+                    failure_event, failure_exit_code, runtime.consecutive_failures,
                     (unsigned long long)runtime.total_restarts);
             return 1;
         }
@@ -549,8 +809,8 @@ static int supervise_channel(const gw_config *config,
                 "channel=%s state=%s event=%s exit_code=%d retry_in=%ds "
                 "failures=%u\n",
                 channel->id, gw_channel_state_string(runtime.state),
-                attempt_event_string(attempt.outcome), attempt.exit_code,
-                runtime.backoff_sec, runtime.consecutive_failures);
+                failure_event, failure_exit_code, runtime.backoff_sec,
+                runtime.consecutive_failures);
         if (!wait_for_backoff(runtime.backoff_sec)) {
             status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
                                            &config->defaults, &error);
@@ -578,6 +838,7 @@ int main(int argc, char **argv)
     const char *config_path = NULL;
     bool dry_run = false;
     bool check_only = false;
+    const char *ffprobe_binary = "ffprobe";
     const char *ffmpeg_binary = "ffmpeg";
     gw_config config;
     gw_error error = {0};
@@ -592,6 +853,9 @@ int main(int argc, char **argv)
             dry_run = true;
         } else if (strcmp(argv[argument], "--check-config") == 0) {
             check_only = true;
+        } else if (strcmp(argv[argument], "--ffprobe-binary") == 0 &&
+                   argument + 1 < argc) {
+            ffprobe_binary = argv[++argument];
         } else if (strcmp(argv[argument], "--ffmpeg-binary") == 0 &&
                    argument + 1 < argc) {
             ffmpeg_binary = argv[++argument];
@@ -675,6 +939,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "Cannot install signal handlers: %s\n", strerror(errno));
             return 1;
         }
-        return supervise_channel(&config, enabled_channel, ffmpeg_binary);
+        return supervise_channel(&config, enabled_channel, ffprobe_binary,
+                                 ffmpeg_binary);
     }
 }

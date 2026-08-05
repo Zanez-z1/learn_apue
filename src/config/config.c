@@ -167,6 +167,7 @@ void gw_config_init(gw_config *config)
     snprintf(config->mediamtx.publish_base_url,
                    sizeof(config->mediamtx.publish_base_url), "%s",
                    "rtsp://127.0.0.1:8554");
+    config->defaults.probe_timeout_sec = 10;
     config->defaults.startup_timeout_sec = 15;
     config->defaults.progress_timeout_sec = 10;
     config->defaults.stable_run_sec = 60;
@@ -327,6 +328,7 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
                 return status;                                                      \
             }                                                                       \
         } while (0)
+        READ_DEFAULT("probe_timeout_sec", probe_timeout_sec);
         READ_DEFAULT("startup_timeout_sec", startup_timeout_sec);
         READ_DEFAULT("progress_timeout_sec", progress_timeout_sec);
         READ_DEFAULT("stable_run_sec", stable_run_sec);
@@ -447,7 +449,8 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
                   "mediamtx.publish_base_url must use rtsp://");
         return GW_ERR_VALIDATION;
     }
-    if (config->defaults.startup_timeout_sec <= 0 ||
+    if (config->defaults.probe_timeout_sec <= 0 ||
+        config->defaults.startup_timeout_sec <= 0 ||
         config->defaults.progress_timeout_sec <= 0 ||
         config->defaults.stable_run_sec <= 0 ||
         config->defaults.stop_timeout_sec <= 0 || config->defaults.max_retries < 0 ||

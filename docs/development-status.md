@@ -52,8 +52,8 @@ git status --short --branch
 日期：2026-08-05
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：9/9 PASS
-ASan/UBSan：9/9 PASS
+常规 CTest：13/13 PASS
+ASan/UBSan：13/13 PASS
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 ```
@@ -85,26 +85,36 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - 达到稳定窗口后清零连续失败次数，保留总重启次数。
 - 增加持续 progress 端到端测试。
 
-### 当前增量：ffprobe 参数与结果解析
+### 6373881：ffprobe 参数与结果解析
 
 - 使用独立参数数组构造 ffprobe 命令，不经过 shell。
 - 固定读取首个视频流的 `codec_name`、`width` 和 `height`。
 - 支持 LF 与 CRLF 输出，拒绝缺失或非法字段。
 - 校验 H.264/H.265 探测结果与配置的 RKMpp 解码器是否匹配。
-- 当前只完成纯逻辑和单元测试，尚未启动 ffprobe 子进程。
+
+### 本次增量：真实输入探测执行链路
+
+- supervisor 在每次启动或重试 FFmpeg 前执行独立 ffprobe 子进程。
+- 新增 `probe_timeout_sec`，与 FFmpeg 的 `startup_timeout_sec` 分开计时。
+- 限制并解析探测 stdout，探测 stderr 与工作进程日志使用相同的 URL 密码脱敏。
+- 区分 `probe_failure`、`probe_timeout`、`probe_mismatch` 和工作进程失败。
+- 探测失败使用现有退避及最大重试预算；探测成功后才从 `PROBING` 进入
+  `STARTING`。
+- 假 ffprobe 端到端覆盖成功、失败、超时、编码不匹配和重试耗尽。
 
 ## 5. 当前能力边界
 
 已经具备：
 
 - 单个启用通道的工作进程监督。
+- 每次工作进程启动前执行 ffprobe，校验首个视频流的编码和尺寸。
 - 结构化进度、最终指标和受控 stderr 日志。
 - 信号停止、超时清理、自动重试和失败终态。
 - 开发机假工作进程端到端验证。
 
 尚未具备：
 
-- 真实 `ffprobe` 输入探测；目前 `PROBING` 只是状态占位。
+- RK3588 板卡上的真实 RTSP/ffprobe 与 MPP/RGA 联调。
 - 多通道并行监督。
 - SIGHUP 配置重载。
 - 通道状态查询和 HTTP 控制 API。
@@ -115,11 +125,9 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 
 按顺序执行：
 
-1. 使用进程管理器执行 ffprobe，并接入 `PROBING`，区分探测失败、探测超时和
-   工作进程失败。
-2. 将 supervisor 从 `main.c` 拆分为独立通道模块。
-3. 完成单通道状态快照，为 HTTP 查询接口准备稳定数据模型。
-4. 进入多通道管理与配置重载。
+1. 将 supervisor 从 `main.c` 拆分为独立通道模块，保持当前行为和 13 项测试不变。
+2. 完成单通道状态快照，为 HTTP 查询接口准备稳定数据模型。
+3. 进入多通道管理与配置重载。
 
 ## 7. 文档职责
 

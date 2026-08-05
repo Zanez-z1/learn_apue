@@ -6,6 +6,7 @@ mediamtx:
   publish_base_url: rtsp://127.0.0.1:8554
 
 defaults:
+  probe_timeout_sec: 10
   startup_timeout_sec: 15
   progress_timeout_sec: 10
   stable_run_sec: 60

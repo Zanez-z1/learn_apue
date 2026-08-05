@@ -2,10 +2,15 @@ if(NOT DEFINED GATEWAY OR NOT DEFINED FIXTURE OR NOT DEFINED CONFIG OR
    NOT DEFINED MODE OR NOT DEFINED REQUIRED OR NOT DEFINED FORBIDDEN)
     message(FATAL_ERROR "failure test arguments are incomplete")
 endif()
+if(NOT DEFINED PROBE_MODE)
+    set(PROBE_MODE success)
+endif()
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env "GW_FIXTURE_MODE=${MODE}"
-            "${GATEWAY}" --config "${CONFIG}" --ffmpeg-binary "${FIXTURE}"
+            "GW_PROBE_FIXTURE_MODE=${PROBE_MODE}"
+            "${GATEWAY}" --config "${CONFIG}"
+            --ffprobe-binary "${FIXTURE}" --ffmpeg-binary "${FIXTURE}"
     RESULT_VARIABLE gateway_result
     OUTPUT_VARIABLE gateway_stdout
     ERROR_VARIABLE gateway_stderr

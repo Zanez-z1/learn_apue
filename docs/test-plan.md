@@ -300,11 +300,13 @@ mediamtx --version
 - 启动超时和 progress 停滞超时。
 - 指数退避、退避上限、最大重试次数和重试计数。
 - 连续运行达到 `stable_run_sec` 后清零连续失败次数。
+- 启动 FFmpeg 前执行 ffprobe，并校验视频编码、宽度和高度。
+- 独立的探测超时，以及探测失败、编码不匹配和探测重试事件。
 
 尚未实现：
 
 - 独立的通道状态查询接口。
-- 真实输入探测（当前 `PROBING` 只表示进入启动前阶段）。
+- RK3588 板卡上的真实 RTSP 输入探测和硬件媒体链路验收。
 
 ### 5.1 开发机进程管理集成测试
 
@@ -329,6 +331,10 @@ gateway_stable_run_test
 gateway_startup_timeout_test
 gateway_progress_timeout_test
 gateway_retry_exhaustion_test
+gateway_probe_failure_test
+gateway_probe_timeout_test
+gateway_probe_mismatch_test
+gateway_probe_retry_exhaustion_test
 ```
 
 `gateway_channel_state_tests` 验证：
@@ -347,8 +353,8 @@ gateway_retry_exhaustion_test
 - 同时接受 LF 和 CRLF 行结束符。
 - 缺失字段、非数字尺寸和解码器不匹配能够被识别。
 
-该测试目前不启动真实 ffprobe；进程执行、探测超时和 `PROBING` 集成将在下一
-增量增加端到端测试。
+该单元测试不创建进程；后面的单通道及探测故障测试通过假 ffprobe 覆盖完整的
+`PROBING` 子进程执行链路。
 
 `gateway_process_tests` 验证：
 
@@ -361,7 +367,8 @@ gateway_retry_exhaustion_test
 
 `gateway_single_channel_test` 验证：
 
-- 配置加载、FFmpeg 参数构造和进程创建的完整调用链。
+- 配置加载、ffprobe 探测、FFmpeg 参数构造和进程创建的完整调用链。
+- 探测成功后输出编码和源视频尺寸，再进入 `STARTING`。
 - progress 输出能够进入 `RUNNING` 状态并生成最终指标。
 - 工作进程 stderr 中出现源 URL 时，密码不会出现在网关日志中。
 - 工作进程退出后进入 `STOPPED`，退出码为 `0`。
@@ -371,6 +378,10 @@ gateway_retry_exhaustion_test
 
 其余故障测试验证：
 
+- ffprobe 非零退出时记录 `probe_failure`，且其 stderr 源 URL 密码被隐藏。
+- ffprobe 超过 `probe_timeout_sec` 时被终止并记录 `probe_timeout`。
+- 探测编码与配置解码器不匹配时记录 `probe_mismatch`，不启动 FFmpeg。
+- 探测连续失败时同样进入 `BACKOFF`，重试耗尽后进入 `FAILED`。
 - 未在 `startup_timeout_sec` 内收到 progress 时终止工作进程并记录
   `startup_timeout`。
 - 已进入 `RUNNING` 后 progress 超过 `progress_timeout_sec` 未更新时记录
@@ -387,10 +398,12 @@ gateway_retry_exhaustion_test
 日期：2026-08-05
 测试机器：x86_64 开发机
 测试方式：假工作进程集成测试
-结果：PASS（单通道 supervisor 增量，8/8 测试通过）
+结果：PASS（真实输入探测执行增量，常规与 ASan/UBSan 均为 13/13 通过）
 覆盖：创建、双管道、退出检测、SIGTERM、SIGKILL、回收、日志密码脱敏、
-      状态机、启动超时、progress 超时、稳定窗口、退避重试、重试耗尽
-限制：尚未连接真实 FFmpeg/RTSP/MediaMTX，不代表完整 Phase 2 通过
+      ffprobe 成功/失败/超时/编码不匹配、状态机、启动超时、progress 超时、
+      稳定窗口、探测及工作进程退避重试、重试耗尽
+限制：开发机使用 ffprobe/FFmpeg 夹具，尚未连接真实 RTSP、Rockchip FFmpeg 或
+      MediaMTX，不代表完整 Phase 2 通过
 ```
 
 通过标准：不手工执行 FFmpeg，通过 `gatewayd` 启停一路真实转码。

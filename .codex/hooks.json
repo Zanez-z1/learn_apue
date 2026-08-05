@@ -1,0 +1,17 @@
+{
+  "description": "Verify developer records, build, and tests before Codex finishes.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/verify_project.py\"",
+            "timeout": 180,
+            "statusMessage": "Checking records, build, and tests"
+          }
+        ]
+      }
+    ]
+  }
+}

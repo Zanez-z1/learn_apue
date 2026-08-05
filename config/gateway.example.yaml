@@ -1,0 +1,30 @@
+server:
+  listen: 127.0.0.1
+  port: 9080
+
+mediamtx:
+  publish_base_url: rtsp://127.0.0.1:8554
+
+defaults:
+  startup_timeout_sec: 15
+  progress_timeout_sec: 10
+  stop_timeout_sec: 5
+  max_retries: 10
+  max_backoff_sec: 30
+
+channels:
+  - id: cam01
+    enabled: true
+    input:
+      type: rtsp
+      url: ${CAM01_RTSP_URL}
+      transport: tcp
+    video:
+      decoder: h264_rkmpp
+      width: 1280
+      height: 720
+      encoder: h264_rkmpp
+      bitrate_kbps: 4000
+      fps: 25
+    output:
+      path: cam01

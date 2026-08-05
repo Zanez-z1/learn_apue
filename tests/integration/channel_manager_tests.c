@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "gateway/channel_manager.h"
 #include "gateway/config.h"
 #include "gateway/supervisor.h"
@@ -5,6 +7,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static int failures;
 
@@ -140,6 +143,87 @@ static void test_stop_all_channels(const char *fixture)
     gw_channel_manager_destroy(manager);
 }
 
+static int wait_for_state(gw_channel_manager *manager, const char *channel_id,
+                          gw_channel_state state, uint64_t generation,
+                          gw_channel_snapshot *snapshot)
+{
+    const struct timespec pause_time = {.tv_sec = 0, .tv_nsec = 20000000L};
+    gw_error error = {0};
+    int attempt;
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        if (gw_channel_manager_get_snapshot(manager, channel_id, snapshot, &error) ==
+                GW_OK &&
+            snapshot->state == state &&
+            snapshot->configuration_generation == generation) {
+            return 1;
+        }
+        nanosleep(&pause_time, NULL);
+    }
+    return 0;
+}
+
+static void test_differential_reload(const char *fixture)
+{
+    gw_channel_manager *manager = NULL;
+    gw_supervisor_options options;
+    gw_channel_reload_summary summary;
+    gw_channel_snapshot first;
+    gw_channel_snapshot second;
+    gw_config config;
+    gw_config candidate;
+    gw_config invalid;
+    gw_error error = {0};
+
+    make_config(&config, false);
+    snprintf(config.channels[0].input.url, sizeof(config.channels[0].input.url),
+             "%s", "rtsp://fixture-user:fixture-password@camera/hold");
+    snprintf(config.channels[1].input.url, sizeof(config.channels[1].input.url),
+             "%s", "rtsp://fixture-user:fixture-password@camera/hold-two");
+    gw_supervisor_options_init(&options);
+    options.ffprobe_binary = fixture;
+    options.ffmpeg_binary = fixture;
+    CHECK(gw_channel_manager_create(&manager, &config, &options, &error) == GW_OK);
+    CHECK(gw_channel_manager_start(manager, &error) == GW_OK);
+    CHECK(wait_for_state(manager, "cam01", GW_CHANNEL_RUNNING, 1U, &first));
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 1U, &second));
+
+    candidate = config;
+    candidate.channels[1].video.bitrate_kbps = 5000;
+    CHECK(gw_channel_manager_reload(manager, &candidate, &summary, &error) == GW_OK);
+    CHECK(summary.unchanged == 1U);
+    CHECK(summary.restarted == 1U);
+    CHECK(summary.added == 0U);
+    CHECK(summary.removed == 0U);
+    CHECK(wait_for_state(manager, "cam01", GW_CHANNEL_RUNNING, 1U, &first));
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 2U, &second));
+
+    invalid = candidate;
+    invalid.channels[0].video.bitrate_kbps = 0;
+    CHECK(gw_channel_manager_reload(manager, &invalid, &summary, &error) ==
+          GW_ERR_VALIDATION);
+    CHECK(summary.unchanged == 0U && summary.restarted == 0U);
+    CHECK(wait_for_state(manager, "cam01", GW_CHANNEL_RUNNING, 1U, &first));
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 2U, &second));
+
+    candidate.channels[1].enabled = false;
+    candidate.channel_count = 3U;
+    make_channel(&candidate.channels[2], "cam03", "hold-three");
+    CHECK(gw_channel_manager_reload(manager, &candidate, &summary, &error) == GW_OK);
+    CHECK(summary.unchanged == 1U);
+    CHECK(summary.restarted == 0U);
+    CHECK(summary.added == 1U);
+    CHECK(summary.removed == 1U);
+    CHECK(gw_channel_manager_get_snapshot(manager, "cam02", &second, &error) ==
+          GW_ERR_VALIDATION);
+    CHECK(wait_for_state(manager, "cam01", GW_CHANNEL_RUNNING, 1U, &first));
+    CHECK(wait_for_state(manager, "cam03", GW_CHANNEL_RUNNING, 1U, &second));
+
+    gw_channel_manager_request_stop(manager, SIGTERM);
+    CHECK(gw_channel_manager_wait(manager) == 0);
+    gw_channel_manager_destroy(manager);
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) {
@@ -149,6 +233,7 @@ int main(int argc, char **argv)
     test_two_channel_success(argv[1]);
     test_channel_failure_isolation(argv[1]);
     test_stop_all_channels(argv[1]);
+    test_differential_reload(argv[1]);
     if (failures != 0) {
         fprintf(stderr, "%d channel manager test(s) failed.\n", failures);
         return 1;

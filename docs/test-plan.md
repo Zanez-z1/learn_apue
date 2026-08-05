@@ -451,6 +451,7 @@ ctest --test-dir build --output-on-failure
 
 ```text
 gateway_channel_manager_tests
+gateway_reload_tests
 gateway_multi_channel_test
 ```
 
@@ -460,6 +461,16 @@ gateway_multi_channel_test
 - 一个工作进程失败时，该通道进入 `FAILED`，健康通道保持 `STOPPED/clean_exit`。
 - 外部停止请求传递给全部 supervisor，两个通道均停止并清除活动进程。
 - 不存在的通道 ID 被快照查询接口拒绝。
+- 合法候选只重启配置变化通道，未变通道保持配置代次和 `RUNNING`。
+- 禁用旧通道并新增通道时更新注册表，复用槽位不会继承旧通道配置代次。
+- 非法候选在修改任何通道前返回，现有通道状态和配置代次保持不变。
+
+`gateway_reload_tests` 启动真实 `gatewayd` CLI 进程并验证：
+
+- 修改同一路径 YAML 并发送 SIGHUP 后得到差异摘要。
+- `cam01` 未变化且不重启，`cam02` 参数变化只重启一次，`cam03` 被新增。
+- 第二次写入非法 YAML 配置后重载被拒绝，服务继续运行。
+- 最终 SIGTERM 停止全部新旧通道，日志中不出现明文密码。
 
 `gateway_multi_channel_test` 从 CLI 加载双通道 YAML，验证 `gatewayd` 同时运行两个
 通道、两者均干净退出，并继续禁止明文密码日志。
@@ -472,23 +483,23 @@ cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=thread'
 cmake --build build-tsan --parallel
 ctest --test-dir build-tsan --output-on-failure \
-  -R 'gateway_(channel_manager|multi_channel)_test'
+  -R 'gateway_(channel_manager|reload|multi_channel)_test'
 ```
 
 ### 6.2 当前增量验收记录
 
 ```text
-日期：2026-08-05
+日期：2026-08-06
 测试机器：x86_64 开发机
 测试方式：双通道假 ffprobe/FFmpeg 进程
-结果：PASS（常规与 ASan/UBSan 17/17；多通道 TSan 2/2）
-覆盖：并发启动、独立快照、健康/失败隔离、统一停止、线程回收、密码脱敏
+结果：PASS（常规与 ASan/UBSan 18/18；多通道/重载 TSan 3/3）
+覆盖：并发启动、独立快照、健康/失败隔离、统一停止、线程回收、密码脱敏、
+      合法/非法 SIGHUP、按通道新增/禁用/重启、未变通道不中断
 限制：未连接真实 RTSP、MediaMTX 或 RK3588 MPP/RGA，不代表多路硬件性能通过
 ```
 
 尚未实现：
 
-- SIGHUP 配置重载和差异化重启。
 - 输入源及 MediaMTX 故障解除后的真实恢复验证。
 - RK3588 多通道性能与稳定性验收。
 

@@ -11,13 +11,19 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 /* The handler only publishes intent; supervisor cleanup runs in normal flow. */
 static volatile sig_atomic_t stop_signal;
+static volatile sig_atomic_t reload_requested;
 
 static void handle_stop_signal(int signal_number)
 {
-    stop_signal = signal_number;
+    if (signal_number == SIGHUP) {
+        reload_requested = 1;
+    } else {
+        stop_signal = signal_number;
+    }
 }
 
 static bool install_signal_handlers(void)
@@ -28,7 +34,8 @@ static bool install_signal_handlers(void)
     action.sa_handler = handle_stop_signal;
     sigemptyset(&action.sa_mask);
     return sigaction(SIGINT, &action, NULL) == 0 &&
-           sigaction(SIGTERM, &action, NULL) == 0;
+           sigaction(SIGTERM, &action, NULL) == 0 &&
+           sigaction(SIGHUP, &action, NULL) == 0;
 }
 
 static void print_usage(const char *program)
@@ -72,8 +79,10 @@ static int run_dry_run(const gw_config *config, const char *ffmpeg_binary)
     return 0;
 }
 
-static int run_channels(const gw_config *config, gw_supervisor_options *options)
+static int run_channels(const char *config_path, const gw_config *config,
+                        gw_supervisor_options *options)
 {
+    const struct timespec poll_interval = {.tv_sec = 0, .tv_nsec = 100000000L};
     gw_channel_manager *manager = NULL;
     gw_error error = {0};
     gw_status status;
@@ -92,6 +101,35 @@ static int run_channels(const gw_config *config, gw_supervisor_options *options)
         gw_channel_manager_destroy(manager);
         return 1;
     }
+    while (!gw_channel_manager_is_finished(manager)) {
+        if (stop_signal != 0) {
+            gw_channel_manager_request_stop(manager, (int)stop_signal);
+        } else if (reload_requested != 0) {
+            gw_channel_reload_summary summary;
+            gw_config candidate;
+
+            reload_requested = 0;
+            status = gw_config_load_file(config_path, &candidate, &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "Configuration reload rejected (%s): %s\n",
+                        gw_status_string(status), error.message);
+            } else {
+                status = gw_channel_manager_reload(manager, &candidate, &summary,
+                                                   &error);
+                if (status != GW_OK) {
+                    fprintf(stderr, "Configuration reload failed (%s): %s\n",
+                            gw_status_string(status), error.message);
+                } else {
+                    printf("Configuration reloaded: unchanged=%zu added=%zu "
+                           "removed=%zu restarted=%zu\n",
+                           summary.unchanged, summary.added, summary.removed,
+                           summary.restarted);
+                    fflush(stdout);
+                }
+            }
+        }
+        nanosleep(&poll_interval, NULL);
+    }
     result = gw_channel_manager_wait(manager);
     gw_channel_manager_destroy(manager);
     return result;
@@ -108,6 +146,8 @@ int main(int argc, char **argv)
     gw_status status;
     int argument;
 
+    /* Preserve one-record-per-line diagnostics when stdout is redirected. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
     gw_supervisor_options_init(&options);
     for (argument = 1; argument < argc; ++argument) {
         if (strcmp(argv[argument], "--config") == 0 && argument + 1 < argc) {
@@ -144,6 +184,7 @@ int main(int argc, char **argv)
         return 1;
     }
     printf("Configuration valid: %zu channel(s)\n", config.channel_count);
+    fflush(stdout);
     if (check_only) {
         return 0;
     }
@@ -155,6 +196,5 @@ int main(int argc, char **argv)
         fprintf(stderr, "Cannot install signal handlers: %s\n", strerror(errno));
         return 1;
     }
-    options.stop_signal = &stop_signal;
-    return run_channels(&config, &options);
+    return run_channels(config_path, &config, &options);
 }

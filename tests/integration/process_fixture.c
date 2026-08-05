@@ -81,7 +81,8 @@ int main(int argc, char **argv)
         printf("frame=42\nfps=25.0\nbitrate=4000kbits/s\n"
                "out_time_us=1680000\ndrop_frames=0\nspeed=1.0x\nprogress=end\n");
         fflush(stdout);
-        if (mode != NULL && strcmp(mode, "stall") == 0) {
+        if ((mode != NULL && strcmp(mode, "stall") == 0) ||
+            (input_url != NULL && strstr(input_url, "/hold") != NULL)) {
             for (;;) {
                 pause();
             }

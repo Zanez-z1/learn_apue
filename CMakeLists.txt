@@ -90,8 +90,17 @@ if(GATEWAY_BUILD_TESTS)
         COMMAND gateway_channel_manager_tests
                 $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_channel_manager_tests PROPERTIES
-        TIMEOUT 5
+        TIMEOUT 15
         FAIL_REGULAR_EXPRESSION "fixture-password")
+
+    add_executable(gateway_reload_tests
+        tests/integration/gateway_reload_tests.c)
+    target_compile_options(gateway_reload_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_reload_tests
+        COMMAND gateway_reload_tests $<TARGET_FILE:gatewayd>
+                $<TARGET_FILE:gateway_process_fixture>)
+    set_tests_properties(gateway_reload_tests PROPERTIES TIMEOUT 15)
 
     add_executable(gateway_process_tests tests/integration/process_manager_tests.c)
     target_link_libraries(gateway_process_tests PRIVATE gateway_core)

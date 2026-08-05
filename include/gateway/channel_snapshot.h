@@ -28,6 +28,8 @@ typedef struct {
     int last_exit_code;
     unsigned int consecutive_failures;
     uint64_t total_restarts;
+    /* Incremented by the manager when this channel's configuration is replaced. */
+    uint64_t configuration_generation;
     int backoff_sec;
     bool has_probe;
     gw_probe_info probe;

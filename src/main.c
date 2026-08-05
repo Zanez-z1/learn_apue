@@ -1,6 +1,7 @@
 /* Command-line entry point, configuration selection, and signal publication. */
 #define _POSIX_C_SOURCE 200809L
 
+#include "gateway/channel_manager.h"
 #include "gateway/config.h"
 #include "gateway/pipeline_builder.h"
 #include "gateway/supervisor.h"
@@ -71,20 +72,29 @@ static int run_dry_run(const gw_config *config, const char *ffmpeg_binary)
     return 0;
 }
 
-static const gw_channel_config *single_enabled_channel(const gw_config *config,
-                                                       size_t *enabled_count)
+static int run_channels(const gw_config *config, gw_supervisor_options *options)
 {
-    const gw_channel_config *enabled_channel = NULL;
-    size_t index;
+    gw_channel_manager *manager = NULL;
+    gw_error error = {0};
+    gw_status status;
+    int result;
 
-    *enabled_count = 0U;
-    for (index = 0U; index < config->channel_count; ++index) {
-        if (config->channels[index].enabled) {
-            enabled_channel = &config->channels[index];
-            ++*enabled_count;
-        }
+    status = gw_channel_manager_create(&manager, config, options, &error);
+    if (status != GW_OK) {
+        fprintf(stderr, "Channel manager error (%s): %s\n",
+                gw_status_string(status), error.message);
+        return 1;
     }
-    return enabled_channel;
+    status = gw_channel_manager_start(manager, &error);
+    if (status != GW_OK) {
+        fprintf(stderr, "Channel manager start error (%s): %s\n",
+                gw_status_string(status), error.message);
+        gw_channel_manager_destroy(manager);
+        return 1;
+    }
+    result = gw_channel_manager_wait(manager);
+    gw_channel_manager_destroy(manager);
+    return result;
 }
 
 int main(int argc, char **argv)
@@ -141,26 +151,10 @@ int main(int argc, char **argv)
         return run_dry_run(&config, options.ffmpeg_binary);
     }
 
-    {
-        const gw_channel_config *channel;
-        size_t enabled_count;
-
-        channel = single_enabled_channel(&config, &enabled_count);
-        if (enabled_count == 0U) {
-            fprintf(stderr, "No enabled channel is configured.\n");
-            return 1;
-        }
-        if (enabled_count > 1U) {
-            fprintf(stderr,
-                    "This milestone supports one enabled channel; configured=%zu.\n",
-                    enabled_count);
-            return 1;
-        }
-        if (!install_signal_handlers()) {
-            fprintf(stderr, "Cannot install signal handlers: %s\n", strerror(errno));
-            return 1;
-        }
-        options.stop_signal = &stop_signal;
-        return gw_supervisor_run(&config, channel, &options);
+    if (!install_signal_handlers()) {
+        fprintf(stderr, "Cannot install signal handlers: %s\n", strerror(errno));
+        return 1;
     }
+    options.stop_signal = &stop_signal;
+    return run_channels(&config, &options);
 }

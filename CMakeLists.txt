@@ -9,9 +9,11 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
 pkg_check_modules(LIBYAML REQUIRED IMPORTED_TARGET yaml-0.1)
 
 add_library(gateway_core
+    src/channel/channel_manager.c
     src/channel/channel_snapshot.c
     src/channel/channel_state.c
     src/channel/supervisor.c
@@ -23,7 +25,7 @@ add_library(gateway_core
 )
 
 target_include_directories(gateway_core PUBLIC include)
-target_link_libraries(gateway_core PUBLIC PkgConfig::LIBYAML)
+target_link_libraries(gateway_core PUBLIC PkgConfig::LIBYAML Threads::Threads)
 target_compile_options(gateway_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 
 add_executable(gatewayd src/main.c)
@@ -79,6 +81,18 @@ if(GATEWAY_BUILD_TESTS)
         COMMAND gateway_supervisor_tests $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_supervisor_tests PROPERTIES TIMEOUT 5)
 
+    add_executable(gateway_channel_manager_tests
+        tests/integration/channel_manager_tests.c)
+    target_link_libraries(gateway_channel_manager_tests PRIVATE gateway_core)
+    target_compile_options(gateway_channel_manager_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_channel_manager_tests
+        COMMAND gateway_channel_manager_tests
+                $<TARGET_FILE:gateway_process_fixture>)
+    set_tests_properties(gateway_channel_manager_tests PROPERTIES
+        TIMEOUT 5
+        FAIL_REGULAR_EXPRESSION "fixture-password")
+
     add_executable(gateway_process_tests tests/integration/process_manager_tests.c)
     target_link_libraries(gateway_process_tests PRIVATE gateway_core)
     target_compile_options(gateway_process_tests PRIVATE
@@ -96,6 +110,14 @@ if(GATEWAY_BUILD_TESTS)
         TIMEOUT 5
         PASS_REGULAR_EXPRESSION "state=STOPPED event=clean_exit exit_code=0"
         FAIL_REGULAR_EXPRESSION "fixture-password")
+
+    add_test(NAME gateway_multi_channel_test
+        COMMAND ${CMAKE_COMMAND}
+            -DGATEWAY=$<TARGET_FILE:gatewayd>
+            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
+            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.multi.integration.yaml
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_multi.cmake)
+    set_tests_properties(gateway_multi_channel_test PROPERTIES TIMEOUT 5)
 
     add_test(NAME gateway_stable_run_test
         COMMAND gatewayd

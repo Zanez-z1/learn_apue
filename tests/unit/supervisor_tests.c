@@ -70,6 +70,8 @@ static void test_default_options(void)
     CHECK(strcmp(options.ffprobe_binary, "ffprobe") == 0);
     CHECK(strcmp(options.ffmpeg_binary, "ffmpeg") == 0);
     CHECK(options.stop_signal == NULL);
+    CHECK(options.stop_check == NULL);
+    CHECK(options.stop_context == NULL);
     CHECK(options.observer == NULL);
     CHECK(options.observer_context == NULL);
 }

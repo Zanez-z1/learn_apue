@@ -11,6 +11,7 @@
 /* Called synchronously; copy the snapshot before returning if it must be retained. */
 typedef void (*gw_supervisor_observer)(const gw_channel_snapshot *snapshot,
                                        void *context);
+typedef int (*gw_supervisor_stop_check)(void *context);
 
 typedef struct {
     /* All pointers are borrowed and must remain valid until gw_supervisor_run ends. */
@@ -18,6 +19,9 @@ typedef struct {
     const char *ffmpeg_binary;
     /* Optional signal value published by the CLI's async signal handler. */
     const volatile sig_atomic_t *stop_signal;
+    /* Optional manager-owned stop source; nonzero takes priority over stop_signal. */
+    gw_supervisor_stop_check stop_check;
+    void *stop_context;
     gw_supervisor_observer observer;
     void *observer_context;
 } gw_supervisor_options;

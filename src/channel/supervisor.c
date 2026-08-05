@@ -61,10 +61,18 @@ typedef struct {
 
 static int stop_signal_value(const gw_supervisor_options *options)
 {
-    if (options == NULL || options->stop_signal == NULL) {
+    int requested;
+
+    if (options == NULL) {
         return 0;
     }
-    return (int)*options->stop_signal;
+    if (options->stop_check != NULL) {
+        requested = options->stop_check(options->stop_context);
+        if (requested != 0) {
+            return requested;
+        }
+    }
+    return options->stop_signal != NULL ? (int)*options->stop_signal : 0;
 }
 
 static void publish_snapshot(const gw_supervisor_options *options,
@@ -83,6 +91,8 @@ void gw_supervisor_options_init(gw_supervisor_options *options)
     options->ffprobe_binary = "ffprobe";
     options->ffmpeg_binary = "ffmpeg";
     options->stop_signal = NULL;
+    options->stop_check = NULL;
+    options->stop_context = NULL;
     options->observer = NULL;
     options->observer_context = NULL;
 }

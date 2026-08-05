@@ -11,14 +11,15 @@ RTSP、WebRTC 和 HLS 分发。
 - 不经过 shell 的 FFmpeg `argv` 参数构造。
 - FFmpeg `-progress pipe:1` 增量解析。
 - 配置检查与脱敏 dry-run 命令输出。
-- 单通道 FFmpeg 工作进程创建、输出管道读取和退出回收。
+- 每通道独立的 FFmpeg 工作进程创建、输出管道读取和退出回收。
 - 接收 `SIGINT`/`SIGTERM` 后先正常停止，超时再强制清理工作进程组。
-- 单通道状态转换、启动/progress 超时、稳定窗口和有上限的退避重试。
+- 每通道独立的状态转换、启动/progress 超时、稳定窗口和有上限的退避重试。
 - 启动 FFmpeg 前执行 ffprobe 输入探测，并检查视频编码与硬件解码器是否匹配。
+- 多个启用通道并行运行，一个通道失败不会停止其他通道。
 - RK3588 媒体环境检查脚本。
 
-多通道管理、配置重载和 HTTP API 尚未实现，不能将当前版本作为完整网关服务
-部署。
+配置重载和 HTTP API 尚未实现，也尚未通过 RK3588 真实媒体链路验收，不能将
+当前版本作为完整网关服务部署。
 
 ## 构建
 
@@ -42,8 +43,8 @@ export CAM01_RTSP_URL='rtsp://user:password@camera.example/live'
 ```
 
 dry-run 输出会隐藏 URL 密码。输出内容只用于诊断；程序会将参数数组直接交给
-`posix_spawnp()`，不会交给 shell 执行。不带检查选项时，当前版本会启动
-唯一一个启用的通道；需要使用包含 Rockchip MPP/RGA 支持的 FFmpeg。
+`posix_spawnp()`，不会交给 shell 执行。不带检查选项时，当前版本会并行启动
+所有启用的通道；需要使用包含 Rockchip MPP/RGA 支持的 FFmpeg。
 
 ## 板卡环境检查
 

@@ -45,6 +45,7 @@ int main(int argc, char **argv)
 {
     if (argc > 2) {
         const char *mode = getenv("GW_FIXTURE_MODE");
+        const char *input_url = NULL;
         const struct timespec progress_interval = {
             .tv_sec = 0,
             .tv_nsec = 200000000L
@@ -53,6 +54,12 @@ int main(int argc, char **argv)
 
         if (is_probe_command(argc, argv)) {
             return run_probe_fixture(argc, argv);
+        }
+        for (index = 1; index + 1 < argc; ++index) {
+            if (strcmp(argv[index], "-i") == 0) {
+                input_url = argv[index + 1];
+                break;
+            }
         }
         if (mode != NULL && strcmp(mode, "no-progress") == 0) {
             for (;;) {
@@ -80,13 +87,13 @@ int main(int argc, char **argv)
             }
         }
         fprintf(stderr, "fixture FFmpeg diagnostic\n");
-        for (index = 1; index + 1 < argc; ++index) {
-            if (strcmp(argv[index], "-i") == 0) {
-                fprintf(stderr, "fixture input=%s\n", argv[index + 1]);
-                break;
-            }
+        if (input_url != NULL) {
+            fprintf(stderr, "fixture input=%s\n", input_url);
         }
-        return mode != NULL && strcmp(mode, "fail") == 0 ? 9 : 0;
+        return (mode != NULL && strcmp(mode, "fail") == 0) ||
+                       (input_url != NULL && strstr(input_url, "/worker-fail") != NULL)
+                   ? 9
+                   : 0;
     }
     if (argc != 2) {
         return 2;

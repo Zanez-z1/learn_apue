@@ -305,7 +305,7 @@ mediamtx --version
 
 尚未实现：
 
-- 独立的通道状态查询接口。
+- 面向外部用户的通道状态查询接口。
 - RK3588 板卡上的真实 RTSP 输入探测和硬件媒体链路验收。
 
 ### 5.1 开发机进程管理集成测试
@@ -428,7 +428,69 @@ gateway_probe_retry_exhaustion_test
 
 ## 6. Phase 3：多通道与异常恢复
 
-状态：`PENDING`
+状态：`IN PROGRESS`
+
+当前已经实现：
+
+- 每个启用通道运行在独立 supervisor 线程。
+- 读写锁保护的通道快照注册表。
+- 全部通道统一等待、停止和回收。
+- 单通道工作进程失败不会改变其他通道的状态或退出结果。
+
+### 6.1 开发机多通道测试
+
+执行全部常规测试：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+与本增量直接相关：
+
+```text
+gateway_channel_manager_tests
+gateway_multi_channel_test
+```
+
+`gateway_channel_manager_tests` 验证：
+
+- 两个正常通道并发完成，分别保存最终 progress 和 `clean_exit`。
+- 一个工作进程失败时，该通道进入 `FAILED`，健康通道保持 `STOPPED/clean_exit`。
+- 外部停止请求传递给全部 supervisor，两个通道均停止并清除活动进程。
+- 不存在的通道 ID 被快照查询接口拒绝。
+
+`gateway_multi_channel_test` 从 CLI 加载双通道 YAML，验证 `gatewayd` 同时运行两个
+通道、两者均干净退出，并继续禁止明文密码日志。
+
+并发专项复测：
+
+```bash
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
+  -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=thread'
+cmake --build build-tsan --parallel
+ctest --test-dir build-tsan --output-on-failure \
+  -R 'gateway_(channel_manager|multi_channel)_test'
+```
+
+### 6.2 当前增量验收记录
+
+```text
+日期：2026-08-05
+测试机器：x86_64 开发机
+测试方式：双通道假 ffprobe/FFmpeg 进程
+结果：PASS（常规与 ASan/UBSan 17/17；多通道 TSan 2/2）
+覆盖：并发启动、独立快照、健康/失败隔离、统一停止、线程回收、密码脱敏
+限制：未连接真实 RTSP、MediaMTX 或 RK3588 MPP/RGA，不代表多路硬件性能通过
+```
+
+尚未实现：
+
+- SIGHUP 配置重载和差异化重启。
+- 输入源及 MediaMTX 故障解除后的真实恢复验证。
+- RK3588 多通道性能与稳定性验收。
 
 功能完成后，本节需要覆盖：
 

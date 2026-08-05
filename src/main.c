@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "gateway/channel_state.h"
 #include "gateway/config.h"
 #include "gateway/pipeline_builder.h"
 #include "gateway/process_manager.h"
@@ -24,6 +25,22 @@ typedef struct {
     size_t length;
     bool dropping;
 } stderr_line_buffer;
+
+typedef enum {
+    ATTEMPT_PENDING = 0,
+    ATTEMPT_CLEAN_EXIT,
+    ATTEMPT_WORKER_FAILURE,
+    ATTEMPT_STARTUP_TIMEOUT,
+    ATTEMPT_PROGRESS_TIMEOUT,
+    ATTEMPT_STOP_REQUESTED,
+    ATTEMPT_INTERNAL_ERROR
+} worker_attempt_outcome;
+
+typedef struct {
+    worker_attempt_outcome outcome;
+    int exit_code;
+    gw_worker_progress progress;
+} worker_attempt_result;
 
 static void handle_stop_signal(int signal_number)
 {
@@ -154,9 +171,56 @@ static int stop_timeout_ms(const gw_config *config)
     return config->defaults.stop_timeout_sec * 1000;
 }
 
-static int run_channel(const gw_config *config, const gw_channel_config *channel,
-                       const char *ffmpeg_binary)
+static bool monotonic_now(struct timespec *time_value)
 {
+    return clock_gettime(CLOCK_MONOTONIC, time_value) == 0;
+}
+
+static bool timeout_elapsed(const struct timespec *start, int timeout_sec)
+{
+    struct timespec now;
+    time_t seconds;
+    long nanoseconds;
+
+    if (!monotonic_now(&now)) {
+        return false;
+    }
+    seconds = now.tv_sec - start->tv_sec;
+    nanoseconds = now.tv_nsec - start->tv_nsec;
+    if (nanoseconds < 0) {
+        --seconds;
+        nanoseconds += 1000000000L;
+    }
+    return seconds > timeout_sec ||
+           (seconds == timeout_sec && nanoseconds >= 0);
+}
+
+static const char *attempt_event_string(worker_attempt_outcome outcome)
+{
+    switch (outcome) {
+    case ATTEMPT_CLEAN_EXIT:
+        return "clean_exit";
+    case ATTEMPT_WORKER_FAILURE:
+        return "worker_failure";
+    case ATTEMPT_STARTUP_TIMEOUT:
+        return "startup_timeout";
+    case ATTEMPT_PROGRESS_TIMEOUT:
+        return "progress_timeout";
+    case ATTEMPT_STOP_REQUESTED:
+        return "stop_requested";
+    case ATTEMPT_INTERNAL_ERROR:
+        return "internal_error";
+    case ATTEMPT_PENDING:
+        break;
+    }
+    return "unknown";
+}
+
+static worker_attempt_result run_worker_attempt(
+    const gw_config *config, const gw_channel_config *channel,
+    const char *ffmpeg_binary, gw_channel_runtime *runtime)
+{
+    worker_attempt_result attempt = {0};
     gw_pipeline_argv arguments;
     gw_process process;
     gw_progress_parser parser;
@@ -166,23 +230,25 @@ static int run_channel(const gw_config *config, const gw_channel_config *channel
     char command[8192];
     bool received_progress = false;
     bool exited = false;
-    bool stop_sent = false;
-    int result = 1;
+    struct timespec started_at;
+    struct timespec last_progress_at;
     gw_status status;
 
+    attempt.outcome = ATTEMPT_INTERNAL_ERROR;
+    attempt.exit_code = -1;
     status = gw_pipeline_build(channel, &config->mediamtx, ffmpeg_binary, &arguments,
                                &error);
     if (status != GW_OK) {
         fprintf(stderr, "channel=%s pipeline error (%s): %s\n", channel->id,
                 gw_status_string(status), error.message);
-        return 1;
+        return attempt;
     }
     status = gw_pipeline_render_redacted(&arguments, command, sizeof(command), &error);
     if (status != GW_OK) {
         fprintf(stderr, "channel=%s command rendering error: %s\n", channel->id,
                 error.message);
         gw_pipeline_argv_free(&arguments);
-        return 1;
+        return attempt;
     }
 
     gw_process_init(&process);
@@ -192,16 +258,27 @@ static int run_channel(const gw_config *config, const gw_channel_config *channel
         fprintf(stderr, "channel=%s start error (%s): %s\n", channel->id,
                 gw_status_string(status), error.message);
         gw_pipeline_argv_free(&arguments);
-        return 1;
+        attempt.outcome = ATTEMPT_WORKER_FAILURE;
+        return attempt;
     }
-    printf("channel=%s pid=%ld state=STARTING command=%s\n", channel->id,
-           (long)process.pid, command);
+    if (!monotonic_now(&started_at)) {
+        fprintf(stderr, "channel=%s clock error: %s\n", channel->id,
+                strerror(errno));
+        gw_process_stop(&process, stop_timeout_ms(config), &error);
+        gw_process_close(&process, &error);
+        gw_pipeline_argv_free(&arguments);
+        return attempt;
+    }
+    last_progress_at = started_at;
+    attempt.outcome = ATTEMPT_PENDING;
+    printf("channel=%s pid=%ld state=%s command=%s\n", channel->id,
+           (long)process.pid, gw_channel_state_string(runtime->state), command);
 
     while (!exited || process.stdout_fd >= 0 || process.stderr_fd >= 0) {
         struct pollfd descriptors[2];
         int poll_result;
 
-        if (stop_requested != 0 && !stop_sent && !exited) {
+        if (stop_requested != 0 && attempt.outcome == ATTEMPT_PENDING && !exited) {
             printf("channel=%s pid=%ld state=STOPPING signal=%d\n", channel->id,
                    (long)process.pid, (int)stop_requested);
             status = gw_process_stop(&process, stop_timeout_ms(config), &error);
@@ -210,7 +287,7 @@ static int run_channel(const gw_config *config, const gw_channel_config *channel
                         error.message);
                 break;
             }
-            stop_sent = true;
+            attempt.outcome = ATTEMPT_STOP_REQUESTED;
             exited = true;
         }
 
@@ -248,10 +325,27 @@ static int run_channel(const gw_config *config, const gw_channel_config *channel
                         error.message);
                 break;
             }
-            if (completed && !received_progress) {
-                received_progress = true;
-                printf("channel=%s pid=%ld state=RUNNING\n", channel->id,
-                       (long)process.pid);
+            if (completed) {
+                if (!monotonic_now(&last_progress_at)) {
+                    fprintf(stderr, "channel=%s clock error: %s\n", channel->id,
+                            strerror(errno));
+                    attempt.outcome = ATTEMPT_INTERNAL_ERROR;
+                    break;
+                }
+                if (!received_progress) {
+                    received_progress = true;
+                    status = gw_channel_transition(runtime, GW_CHANNEL_EVENT_PROGRESS,
+                                                   &config->defaults, &error);
+                    if (status != GW_OK) {
+                        fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                                error.message);
+                        attempt.outcome = ATTEMPT_INTERNAL_ERROR;
+                        break;
+                    }
+                    printf("channel=%s pid=%ld state=%s\n", channel->id,
+                           (long)process.pid,
+                           gw_channel_state_string(runtime->state));
+                }
             }
         }
         if (descriptors[1].revents != 0) {
@@ -281,6 +375,33 @@ static int run_channel(const gw_config *config, const gw_channel_config *channel
                 break;
             }
         }
+
+        if (!exited && attempt.outcome == ATTEMPT_PENDING) {
+            worker_attempt_outcome timeout_outcome = ATTEMPT_PENDING;
+
+            if (!received_progress &&
+                timeout_elapsed(&started_at,
+                                config->defaults.startup_timeout_sec)) {
+                timeout_outcome = ATTEMPT_STARTUP_TIMEOUT;
+            } else if (received_progress &&
+                       timeout_elapsed(&last_progress_at,
+                                       config->defaults.progress_timeout_sec)) {
+                timeout_outcome = ATTEMPT_PROGRESS_TIMEOUT;
+            }
+            if (timeout_outcome != ATTEMPT_PENDING) {
+                fprintf(stderr, "channel=%s pid=%ld event=%s\n", channel->id,
+                        (long)process.pid, attempt_event_string(timeout_outcome));
+                status = gw_process_stop(&process, stop_timeout_ms(config), &error);
+                if (status != GW_OK) {
+                    fprintf(stderr, "channel=%s timeout cleanup error: %s\n",
+                            channel->id, error.message);
+                    attempt.outcome = ATTEMPT_INTERNAL_ERROR;
+                    break;
+                }
+                attempt.outcome = timeout_outcome;
+                exited = true;
+            }
+        }
     }
 
     if (process.running) {
@@ -291,22 +412,135 @@ static int run_channel(const gw_config *config, const gw_channel_config *channel
         }
     }
     if (process.reaped) {
-        result = gw_process_exit_code(&process);
-        printf("channel=%s pid=%ld state=STOPPED exit_code=%d frame=%llu fps=%.2f "
-               "bitrate=%s drop_frames=%llu speed=%.3f\n",
-               channel->id, (long)process.pid, result,
-               (unsigned long long)latest_progress.frame, latest_progress.fps,
-               latest_progress.bitrate,
-               (unsigned long long)latest_progress.drop_frames,
-               latest_progress.speed);
+        attempt.exit_code = gw_process_exit_code(&process);
+        if (attempt.outcome == ATTEMPT_PENDING) {
+            attempt.outcome = attempt.exit_code == 0 ? ATTEMPT_CLEAN_EXIT
+                                                     : ATTEMPT_WORKER_FAILURE;
+        }
     }
     status = gw_process_close(&process, &error);
     if (status != GW_OK) {
         fprintf(stderr, "channel=%s close error: %s\n", channel->id, error.message);
-        result = 1;
+        attempt.outcome = ATTEMPT_INTERNAL_ERROR;
     }
     gw_pipeline_argv_free(&arguments);
-    return result;
+    attempt.progress = latest_progress;
+    return attempt;
+}
+
+static bool wait_for_backoff(int backoff_sec)
+{
+    struct timespec started_at;
+    const struct timespec pause_time = {.tv_sec = 0, .tv_nsec = 100000000L};
+
+    if (!monotonic_now(&started_at)) {
+        return false;
+    }
+    while (!timeout_elapsed(&started_at, backoff_sec)) {
+        if (stop_requested != 0) {
+            return false;
+        }
+        nanosleep(&pause_time, NULL);
+    }
+    return true;
+}
+
+static int supervise_channel(const gw_config *config,
+                             const gw_channel_config *channel,
+                             const char *ffmpeg_binary)
+{
+    gw_channel_runtime runtime;
+    gw_error error = {0};
+    gw_status status;
+
+    gw_channel_runtime_init(&runtime, channel->enabled);
+    status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_START,
+                                   &config->defaults, &error);
+    if (status != GW_OK) {
+        fprintf(stderr, "channel=%s state error: %s\n", channel->id, error.message);
+        return 1;
+    }
+
+    for (;;) {
+        worker_attempt_result attempt;
+
+        printf("channel=%s state=%s restart_count=%llu\n", channel->id,
+               gw_channel_state_string(runtime.state),
+               (unsigned long long)runtime.total_restarts);
+        status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_PROBE_SUCCEEDED,
+                                       &config->defaults, &error);
+        if (status != GW_OK) {
+            fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                    error.message);
+            return 1;
+        }
+
+        attempt = run_worker_attempt(config, channel, ffmpeg_binary, &runtime);
+        if (attempt.outcome == ATTEMPT_CLEAN_EXIT ||
+            attempt.outcome == ATTEMPT_STOP_REQUESTED) {
+            status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
+                                           &config->defaults, &error);
+            if (status != GW_OK) {
+                fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                        error.message);
+                return 1;
+            }
+            printf("channel=%s state=%s event=%s exit_code=%d frame=%llu fps=%.2f "
+                   "bitrate=%s drop_frames=%llu speed=%.3f restart_count=%llu\n",
+                   channel->id, gw_channel_state_string(runtime.state),
+                   attempt_event_string(attempt.outcome), attempt.exit_code,
+                   (unsigned long long)attempt.progress.frame, attempt.progress.fps,
+                   attempt.progress.bitrate,
+                   (unsigned long long)attempt.progress.drop_frames,
+                   attempt.progress.speed,
+                   (unsigned long long)runtime.total_restarts);
+            return 0;
+        }
+
+        status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_FAILURE,
+                                       &config->defaults, &error);
+        if (status != GW_OK) {
+            fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                    error.message);
+            return 1;
+        }
+        if (runtime.state == GW_CHANNEL_FAILED) {
+            fprintf(stderr,
+                    "channel=%s state=%s event=%s exit_code=%d failures=%u "
+                    "restart_count=%llu\n",
+                    channel->id, gw_channel_state_string(runtime.state),
+                    attempt_event_string(attempt.outcome), attempt.exit_code,
+                    runtime.consecutive_failures,
+                    (unsigned long long)runtime.total_restarts);
+            return 1;
+        }
+
+        fprintf(stderr,
+                "channel=%s state=%s event=%s exit_code=%d retry_in=%ds "
+                "failures=%u\n",
+                channel->id, gw_channel_state_string(runtime.state),
+                attempt_event_string(attempt.outcome), attempt.exit_code,
+                runtime.backoff_sec, runtime.consecutive_failures);
+        if (!wait_for_backoff(runtime.backoff_sec)) {
+            status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
+                                           &config->defaults, &error);
+            if (status == GW_OK) {
+                printf("channel=%s state=%s event=stop_requested\n", channel->id,
+                       gw_channel_state_string(runtime.state));
+                return 0;
+            }
+            fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                    error.message);
+            return 1;
+        }
+        status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_BACKOFF_ELAPSED,
+                                       &config->defaults, &error);
+        if (status != GW_OK) {
+            fprintf(stderr, "channel=%s state error: %s\n", channel->id,
+                    error.message);
+            return 1;
+        }
+    }
 }
 
 int main(int argc, char **argv)
@@ -408,6 +642,6 @@ int main(int argc, char **argv)
             fprintf(stderr, "Cannot install signal handlers: %s\n", strerror(errno));
             return 1;
         }
-        return run_channel(&config, enabled_channel, ffmpeg_binary);
+        return supervise_channel(&config, enabled_channel, ffmpeg_binary);
     }
 }

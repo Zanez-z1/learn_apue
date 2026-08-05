@@ -12,6 +12,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBYAML REQUIRED IMPORTED_TARGET yaml-0.1)
 
 add_library(gateway_core
+    src/channel/channel_state.c
     src/config/config.c
     src/pipeline/pipeline_builder.c
     src/monitor/progress_parser.c
@@ -40,6 +41,13 @@ if(GATEWAY_BUILD_TESTS)
     add_test(NAME gateway_unit_tests COMMAND gateway_unit_tests)
     set_tests_properties(gateway_unit_tests PROPERTIES TIMEOUT 5)
 
+    add_executable(gateway_channel_state_tests tests/unit/channel_state_tests.c)
+    target_link_libraries(gateway_channel_state_tests PRIVATE gateway_core)
+    target_compile_options(gateway_channel_state_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_channel_state_tests COMMAND gateway_channel_state_tests)
+    set_tests_properties(gateway_channel_state_tests PROPERTIES TIMEOUT 5)
+
     add_executable(gateway_process_fixture tests/integration/process_fixture.c)
     target_compile_options(gateway_process_fixture PRIVATE
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
@@ -58,6 +66,42 @@ if(GATEWAY_BUILD_TESTS)
             --ffmpeg-binary $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_single_channel_test PROPERTIES
         TIMEOUT 5
-        PASS_REGULAR_EXPRESSION "state=STOPPED exit_code=0"
+        PASS_REGULAR_EXPRESSION "state=STOPPED event=clean_exit exit_code=0"
         FAIL_REGULAR_EXPRESSION "fixture-password")
+
+    add_test(NAME gateway_startup_timeout_test
+        COMMAND ${CMAKE_COMMAND}
+            -DGATEWAY=$<TARGET_FILE:gatewayd>
+            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
+            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
+            -DMODE=no-progress
+            "-DREQUIRED=state=FAILED event=startup_timeout"
+            -DFORBIDDEN=fixture-password
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_failure.cmake)
+    set_tests_properties(gateway_startup_timeout_test PROPERTIES
+        TIMEOUT 4)
+
+    add_test(NAME gateway_progress_timeout_test
+        COMMAND ${CMAKE_COMMAND}
+            -DGATEWAY=$<TARGET_FILE:gatewayd>
+            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
+            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
+            -DMODE=stall
+            "-DREQUIRED=state=FAILED event=progress_timeout"
+            -DFORBIDDEN=fixture-password
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_failure.cmake)
+    set_tests_properties(gateway_progress_timeout_test PROPERTIES
+        TIMEOUT 4)
+
+    add_test(NAME gateway_retry_exhaustion_test
+        COMMAND ${CMAKE_COMMAND}
+            -DGATEWAY=$<TARGET_FILE:gatewayd>
+            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
+            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.retry.integration.yaml
+            -DMODE=fail
+            "-DREQUIRED=state=FAILED event=worker_failure exit_code=9 failures=3 restart_count=2"
+            -DFORBIDDEN=fixture-password
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_failure.cmake)
+    set_tests_properties(gateway_retry_exhaustion_test PROPERTIES
+        TIMEOUT 5)
 endif()

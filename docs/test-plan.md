@@ -295,12 +295,16 @@ mediamtx --version
 - 启动、正常停止和强制停止。
 - 子进程回收及僵尸进程检查。
 - 发送 `SIGTERM` 后的资源清理。
+- `STOPPED`、`PROBING`、`STARTING`、`RUNNING`、`BACKOFF` 和 `FAILED`
+  状态转换。
+- 启动超时和 progress 停滞超时。
+- 指数退避、退避上限、最大重试次数和重试计数。
 
 尚未实现：
 
-- 启动超时和 progress 超时检测。
-- 完整的单通道状态机与状态查询接口。
-- 失败退避和自动重启。
+- 稳定运行一段时间后自动清零连续失败次数。
+- 独立的通道状态查询接口。
+- 真实输入探测（当前 `PROBING` 只表示进入启动前阶段）。
 
 ### 5.1 开发机进程管理集成测试
 
@@ -317,9 +321,21 @@ ctest --test-dir build --output-on-failure
 CTest 中与 Phase 2 相关的测试：
 
 ```text
+gateway_channel_state_tests
 gateway_process_tests
 gateway_single_channel_test
+gateway_startup_timeout_test
+gateway_progress_timeout_test
+gateway_retry_exhaustion_test
 ```
+
+`gateway_channel_state_tests` 验证：
+
+- 正常状态转换和非法事件拒绝。
+- 首次失败从 1 秒开始指数退避。
+- 退避时间不超过配置上限。
+- 重试耗尽进入 `FAILED`。
+- 稳定事件和人工重新开始能够清零连续失败次数。
 
 `gateway_process_tests` 验证：
 
@@ -337,6 +353,16 @@ gateway_single_channel_test
 - 工作进程 stderr 中出现源 URL 时，密码不会出现在网关日志中。
 - 工作进程退出后进入 `STOPPED`，退出码为 `0`。
 
+其余故障测试验证：
+
+- 未在 `startup_timeout_sec` 内收到 progress 时终止工作进程并记录
+  `startup_timeout`。
+- 已进入 `RUNNING` 后 progress 超过 `progress_timeout_sec` 未更新时记录
+  `progress_timeout`。
+- 工作进程连续失败时进入 `BACKOFF` 并自动重启。
+- 超过 `max_retries` 后进入 `FAILED`，不再快速重启。
+- 所有失败路径都继续检查日志中不得出现明文密码。
+
 预期：全部测试通过，CTest 输出中不得出现 `fixture-password`。
 
 ### 5.2 当前增量验收记录
@@ -345,8 +371,9 @@ gateway_single_channel_test
 日期：2026-08-05
 测试机器：x86_64 开发机
 测试方式：假工作进程集成测试
-结果：PASS（单进程生命周期管理增量）
-覆盖：创建、双管道、退出检测、SIGTERM、SIGKILL、回收、日志密码脱敏
+结果：PASS（单通道 supervisor 增量，7/7 测试通过）
+覆盖：创建、双管道、退出检测、SIGTERM、SIGKILL、回收、日志密码脱敏、
+      状态机、启动超时、progress 超时、退避重试、重试耗尽
 限制：尚未连接真实 FFmpeg/RTSP/MediaMTX，不代表完整 Phase 2 通过
 ```
 

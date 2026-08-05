@@ -2,16 +2,29 @@
 
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 int main(int argc, char **argv)
 {
     if (argc > 2) {
+        const char *mode = getenv("GW_FIXTURE_MODE");
         int index;
 
+        if (mode != NULL && strcmp(mode, "no-progress") == 0) {
+            for (;;) {
+                pause();
+            }
+        }
         printf("frame=42\nfps=25.0\nbitrate=4000kbits/s\n"
                "out_time_us=1680000\ndrop_frames=0\nspeed=1.0x\nprogress=end\n");
+        fflush(stdout);
+        if (mode != NULL && strcmp(mode, "stall") == 0) {
+            for (;;) {
+                pause();
+            }
+        }
         fprintf(stderr, "fixture FFmpeg diagnostic\n");
         for (index = 1; index + 1 < argc; ++index) {
             if (strcmp(argv[index], "-i") == 0) {
@@ -19,7 +32,7 @@ int main(int argc, char **argv)
                 break;
             }
         }
-        return 0;
+        return mode != NULL && strcmp(mode, "fail") == 0 ? 9 : 0;
     }
     if (argc != 2) {
         return 2;

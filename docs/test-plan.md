@@ -324,6 +324,7 @@ CTest 中与 Phase 2 相关的测试：
 
 ```text
 gateway_channel_state_tests
+gateway_channel_snapshot_tests
 gateway_probe_tests
 gateway_supervisor_tests
 gateway_process_tests
@@ -345,6 +346,13 @@ gateway_probe_retry_exhaustion_test
 - 退避时间不超过配置上限。
 - 重试耗尽进入 `FAILED`。
 - 稳定事件和人工重新开始能够清零连续失败次数。
+
+`gateway_channel_snapshot_tests` 验证：
+
+- 初始化状态、通道 ID 和空的探测/progress/退出信息。
+- 状态、失败次数、退避时间和重启数同步更新。
+- 活动进程类型/PID、退出码、探测结果和 progress 的保存与覆盖。
+- 进程类型使用稳定字符串表示。
 
 `gateway_probe_tests` 验证：
 
@@ -371,6 +379,8 @@ gateway_probe_retry_exhaustion_test
 - ffprobe 和 FFmpeg 默认可执行文件名称。
 - 空配置、空通道和空可执行文件名称被公共接口拒绝。
 - CLI 注入的停止信号能够在 `PROBING` 阶段终止并回收探测进程，最终正常停止。
+- 同步观察者能够看到 `PROBING`、`STARTING`、`RUNNING` 和 `STOPPED`。
+- 最终快照保留探测编码、最后一条 progress、干净退出码，并清除活动 PID。
 
 `gateway_single_channel_test` 验证：
 
@@ -405,11 +415,11 @@ gateway_probe_retry_exhaustion_test
 日期：2026-08-05
 测试机器：x86_64 开发机
 测试方式：假工作进程集成测试
-结果：PASS（独立 supervisor 模块增量，常规与 ASan/UBSan 均为 14/14 通过）
+结果：PASS（单通道状态快照增量，常规与 ASan/UBSan 均为 15/15 通过）
 覆盖：创建、双管道、退出检测、SIGTERM、SIGKILL、回收、日志密码脱敏、
       ffprobe 成功/失败/超时/编码不匹配、状态机、启动超时、progress 超时、
-      稳定窗口、探测及工作进程退避重试、重试耗尽、supervisor 参数契约和
-      探测阶段外部停止
+      稳定窗口、探测及工作进程退避重试、重试耗尽、supervisor 参数契约、
+      探测阶段外部停止、完整状态序列和最终快照
 限制：开发机使用 ffprobe/FFmpeg 夹具，尚未连接真实 RTSP、Rockchip FFmpeg 或
       MediaMTX，不代表完整 Phase 2 通过
 ```

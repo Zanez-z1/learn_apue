@@ -67,6 +67,14 @@ static int stop_signal_value(const gw_supervisor_options *options)
     return (int)*options->stop_signal;
 }
 
+static void publish_snapshot(const gw_supervisor_options *options,
+                             const gw_channel_snapshot *snapshot)
+{
+    if (options->observer != NULL) {
+        options->observer(snapshot, options->observer_context);
+    }
+}
+
 void gw_supervisor_options_init(gw_supervisor_options *options)
 {
     if (options == NULL) {
@@ -75,6 +83,8 @@ void gw_supervisor_options_init(gw_supervisor_options *options)
     options->ffprobe_binary = "ffprobe";
     options->ffmpeg_binary = "ffmpeg";
     options->stop_signal = NULL;
+    options->observer = NULL;
+    options->observer_context = NULL;
 }
 
 static bool append_text(char *output, size_t capacity, size_t *length,
@@ -255,7 +265,7 @@ static const char *probe_attempt_event_string(probe_attempt_outcome outcome)
 
 static probe_attempt_result run_probe_attempt(
     const gw_config *config, const gw_channel_config *channel,
-    const gw_supervisor_options *options)
+    const gw_supervisor_options *options, gw_channel_snapshot *snapshot)
 {
     probe_attempt_result attempt = {0};
     gw_probe_argv arguments;
@@ -295,6 +305,9 @@ static probe_attempt_result run_probe_attempt(
         return attempt;
     }
 
+    gw_channel_snapshot_set_process(snapshot, GW_CHANNEL_PROCESS_PROBE,
+                                    process.pid, "probe_started");
+    publish_snapshot(options, snapshot);
     attempt.outcome = PROBE_ATTEMPT_PENDING;
     printf("channel=%s pid=%ld state=PROBING event=probe_started\n", channel->id,
            (long)process.pid);
@@ -435,7 +448,8 @@ static probe_attempt_result run_probe_attempt(
 
 static worker_attempt_result run_worker_attempt(
     const gw_config *config, const gw_channel_config *channel,
-    const gw_supervisor_options *options, gw_channel_runtime *runtime)
+    const gw_supervisor_options *options, gw_channel_runtime *runtime,
+    gw_channel_snapshot *snapshot)
 {
     worker_attempt_result attempt = {0};
     gw_pipeline_argv arguments;
@@ -490,6 +504,9 @@ static worker_attempt_result run_worker_attempt(
         return attempt;
     }
     last_progress_at = started_at;
+    gw_channel_snapshot_set_process(snapshot, GW_CHANNEL_PROCESS_WORKER,
+                                    process.pid, "worker_started");
+    publish_snapshot(options, snapshot);
     attempt.outcome = ATTEMPT_PENDING;
     printf("channel=%s pid=%ld state=%s command=%s\n", channel->id,
            (long)process.pid, gw_channel_state_string(runtime->state), command);
@@ -569,6 +586,10 @@ static worker_attempt_result run_worker_attempt(
                            (long)process.pid,
                            gw_channel_state_string(runtime->state));
                 }
+                gw_channel_snapshot_update_runtime(snapshot, runtime, "progress");
+                gw_channel_snapshot_set_progress(snapshot, &latest_progress,
+                                                 "progress");
+                publish_snapshot(options, snapshot);
             }
         }
         if (descriptors[1].revents != 0) {
@@ -610,6 +631,8 @@ static worker_attempt_result run_worker_attempt(
                 break;
             }
             stable_reported = true;
+            gw_channel_snapshot_update_runtime(snapshot, runtime, "stable");
+            publish_snapshot(options, snapshot);
             printf("channel=%s pid=%ld state=%s event=stable failures=%u\n",
                    channel->id, (long)process.pid,
                    gw_channel_state_string(runtime->state),
@@ -694,6 +717,7 @@ int gw_supervisor_run(const gw_config *config,
                       const gw_supervisor_options *options)
 {
     gw_channel_runtime runtime;
+    gw_channel_snapshot snapshot;
     gw_error error = {0};
     gw_status status;
 
@@ -705,12 +729,15 @@ int gw_supervisor_run(const gw_config *config,
     }
 
     gw_channel_runtime_init(&runtime, channel->enabled);
+    gw_channel_snapshot_init(&snapshot, channel);
     status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_START,
                                    &config->defaults, &error);
     if (status != GW_OK) {
         fprintf(stderr, "channel=%s state error: %s\n", channel->id, error.message);
         return 1;
     }
+    gw_channel_snapshot_update_runtime(&snapshot, &runtime, "start");
+    publish_snapshot(options, &snapshot);
 
     /* Each loop iteration probes, starts one worker attempt, then stops or retries. */
     for (;;) {
@@ -722,7 +749,13 @@ int gw_supervisor_run(const gw_config *config,
         printf("channel=%s state=%s restart_count=%llu\n", channel->id,
                gw_channel_state_string(runtime.state),
                (unsigned long long)runtime.total_restarts);
-        probe = run_probe_attempt(config, channel, options);
+        probe = run_probe_attempt(config, channel, options, &snapshot);
+        if (probe.info.codec_name[0] != '\0') {
+            gw_channel_snapshot_set_probe(&snapshot, &probe.info);
+        }
+        gw_channel_snapshot_clear_process(
+            &snapshot, probe.exit_code, probe_attempt_event_string(probe.outcome));
+        publish_snapshot(options, &snapshot);
         if (probe.outcome == PROBE_ATTEMPT_STOP_REQUESTED) {
             status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
                                            &config->defaults, &error);
@@ -731,6 +764,9 @@ int gw_supervisor_run(const gw_config *config,
                         error.message);
                 return 1;
             }
+            gw_channel_snapshot_update_runtime(&snapshot, &runtime,
+                                               "stop_requested");
+            publish_snapshot(options, &snapshot);
             printf("channel=%s state=%s event=stop_requested restart_count=%llu\n",
                    channel->id, gw_channel_state_string(runtime.state),
                    (unsigned long long)runtime.total_restarts);
@@ -749,8 +785,21 @@ int gw_supervisor_run(const gw_config *config,
                         error.message);
                 return 1;
             }
+            gw_channel_snapshot_update_runtime(&snapshot, &runtime,
+                                               "probe_succeeded");
+            publish_snapshot(options, &snapshot);
 
-            attempt = run_worker_attempt(config, channel, options, &runtime);
+            attempt = run_worker_attempt(config, channel, options, &runtime,
+                                         &snapshot);
+            gw_channel_snapshot_clear_process(
+                &snapshot, attempt.exit_code,
+                attempt_event_string(attempt.outcome));
+            if (attempt.progress.status[0] != '\0') {
+                gw_channel_snapshot_set_progress(
+                    &snapshot, &attempt.progress,
+                    attempt_event_string(attempt.outcome));
+            }
+            publish_snapshot(options, &snapshot);
             if (attempt.outcome == ATTEMPT_CLEAN_EXIT ||
                 attempt.outcome == ATTEMPT_STOP_REQUESTED) {
                 status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
@@ -760,6 +809,9 @@ int gw_supervisor_run(const gw_config *config,
                             error.message);
                     return 1;
                 }
+                gw_channel_snapshot_update_runtime(
+                    &snapshot, &runtime, attempt_event_string(attempt.outcome));
+                publish_snapshot(options, &snapshot);
                 printf("channel=%s state=%s event=%s exit_code=%d frame=%llu "
                        "fps=%.2f bitrate=%s drop_frames=%llu speed=%.3f "
                        "restart_count=%llu\n",
@@ -794,6 +846,8 @@ int gw_supervisor_run(const gw_config *config,
                     error.message);
             return 1;
         }
+        gw_channel_snapshot_update_runtime(&snapshot, &runtime, failure_event);
+        publish_snapshot(options, &snapshot);
         if (runtime.state == GW_CHANNEL_FAILED) {
             fprintf(stderr,
                     "channel=%s state=%s event=%s exit_code=%d failures=%u "
@@ -814,6 +868,9 @@ int gw_supervisor_run(const gw_config *config,
             status = gw_channel_transition(&runtime, GW_CHANNEL_EVENT_STOP,
                                            &config->defaults, &error);
             if (status == GW_OK) {
+                gw_channel_snapshot_update_runtime(&snapshot, &runtime,
+                                                   "stop_requested");
+                publish_snapshot(options, &snapshot);
                 printf("channel=%s state=%s event=stop_requested\n", channel->id,
                        gw_channel_state_string(runtime.state));
                 return 0;
@@ -829,5 +886,8 @@ int gw_supervisor_run(const gw_config *config,
                     error.message);
             return 1;
         }
+        gw_channel_snapshot_update_runtime(&snapshot, &runtime,
+                                           "backoff_elapsed");
+        publish_snapshot(options, &snapshot);
     }
 }

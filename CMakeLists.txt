@@ -12,6 +12,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBYAML REQUIRED IMPORTED_TARGET yaml-0.1)
 
 add_library(gateway_core
+    src/channel/channel_snapshot.c
     src/channel/channel_state.c
     src/channel/supervisor.c
     src/config/config.c
@@ -49,6 +50,15 @@ if(GATEWAY_BUILD_TESTS)
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
     add_test(NAME gateway_channel_state_tests COMMAND gateway_channel_state_tests)
     set_tests_properties(gateway_channel_state_tests PROPERTIES TIMEOUT 5)
+
+    add_executable(gateway_channel_snapshot_tests
+        tests/unit/channel_snapshot_tests.c)
+    target_link_libraries(gateway_channel_snapshot_tests PRIVATE gateway_core)
+    target_compile_options(gateway_channel_snapshot_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_channel_snapshot_tests
+        COMMAND gateway_channel_snapshot_tests)
+    set_tests_properties(gateway_channel_snapshot_tests PROPERTIES TIMEOUT 5)
 
     add_executable(gateway_probe_tests tests/unit/probe_tests.c)
     target_link_libraries(gateway_probe_tests PRIVATE gateway_core)

@@ -7,6 +7,17 @@
 
 static int failures;
 
+typedef struct {
+    gw_channel_snapshot last;
+    int updates;
+    int saw_probing;
+    int saw_starting;
+    int saw_running;
+    int saw_stopped;
+    int saw_probe_process;
+    int saw_worker_process;
+} snapshot_capture;
+
 #define CHECK(condition)                                                           \
     do {                                                                           \
         if (!(condition)) {                                                        \
@@ -26,6 +37,29 @@ static void make_channel(gw_channel_config *channel)
              "tcp");
     snprintf(channel->video.decoder, sizeof(channel->video.decoder), "%s",
              "h264_rkmpp");
+    channel->video.width = 1280;
+    channel->video.height = 720;
+    snprintf(channel->video.encoder, sizeof(channel->video.encoder), "%s",
+             "h264_rkmpp");
+    channel->video.bitrate_kbps = 4000;
+    channel->video.fps = 25;
+    snprintf(channel->output.path, sizeof(channel->output.path), "%s", "cam01");
+}
+
+static void capture_snapshot(const gw_channel_snapshot *snapshot, void *context)
+{
+    snapshot_capture *capture = context;
+
+    capture->last = *snapshot;
+    ++capture->updates;
+    capture->saw_probing |= snapshot->state == GW_CHANNEL_PROBING;
+    capture->saw_starting |= snapshot->state == GW_CHANNEL_STARTING;
+    capture->saw_running |= snapshot->state == GW_CHANNEL_RUNNING;
+    capture->saw_stopped |= snapshot->state == GW_CHANNEL_STOPPED;
+    capture->saw_probe_process |=
+        snapshot->process_kind == GW_CHANNEL_PROCESS_PROBE;
+    capture->saw_worker_process |=
+        snapshot->process_kind == GW_CHANNEL_PROCESS_WORKER;
 }
 
 static void test_default_options(void)
@@ -36,6 +70,8 @@ static void test_default_options(void)
     CHECK(strcmp(options.ffprobe_binary, "ffprobe") == 0);
     CHECK(strcmp(options.ffmpeg_binary, "ffmpeg") == 0);
     CHECK(options.stop_signal == NULL);
+    CHECK(options.observer == NULL);
+    CHECK(options.observer_context == NULL);
 }
 
 static void test_argument_validation(void)
@@ -56,6 +92,7 @@ static void test_argument_validation(void)
 static void test_stop_during_probe(const char *fixture)
 {
     volatile sig_atomic_t stop_signal = SIGTERM;
+    snapshot_capture capture = {0};
     gw_supervisor_options options;
     gw_config config;
     gw_channel_config channel;
@@ -64,10 +101,50 @@ static void test_stop_during_probe(const char *fixture)
     options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     options.stop_signal = &stop_signal;
+    options.observer = capture_snapshot;
+    options.observer_context = &capture;
     gw_config_init(&config);
     config.defaults.stop_timeout_sec = 1;
     make_channel(&channel);
     CHECK(gw_supervisor_run(&config, &channel, &options) == 0);
+    CHECK(capture.saw_probing);
+    CHECK(capture.saw_probe_process);
+    CHECK(capture.last.state == GW_CHANNEL_STOPPED);
+    CHECK(strcmp(capture.last.last_event, "stop_requested") == 0);
+    CHECK(capture.last.process_kind == GW_CHANNEL_PROCESS_NONE);
+}
+
+static void test_success_snapshots(const char *fixture)
+{
+    snapshot_capture capture = {0};
+    gw_supervisor_options options;
+    gw_config config;
+    gw_channel_config channel;
+
+    gw_supervisor_options_init(&options);
+    options.ffprobe_binary = fixture;
+    options.ffmpeg_binary = fixture;
+    options.observer = capture_snapshot;
+    options.observer_context = &capture;
+    gw_config_init(&config);
+    make_channel(&channel);
+    CHECK(gw_supervisor_run(&config, &channel, &options) == 0);
+    CHECK(capture.updates >= 8);
+    CHECK(capture.saw_probing);
+    CHECK(capture.saw_starting);
+    CHECK(capture.saw_running);
+    CHECK(capture.saw_stopped);
+    CHECK(capture.saw_probe_process);
+    CHECK(capture.saw_worker_process);
+    CHECK(strcmp(capture.last.channel_id, "cam01") == 0);
+    CHECK(strcmp(capture.last.last_event, "clean_exit") == 0);
+    CHECK(capture.last.has_probe);
+    CHECK(strcmp(capture.last.probe.codec_name, "h264") == 0);
+    CHECK(capture.last.has_progress);
+    CHECK(capture.last.progress.frame == 42U);
+    CHECK(capture.last.has_exit_code);
+    CHECK(capture.last.last_exit_code == 0);
+    CHECK(capture.last.process_kind == GW_CHANNEL_PROCESS_NONE);
 }
 
 int main(int argc, char **argv)
@@ -79,6 +156,7 @@ int main(int argc, char **argv)
     test_default_options();
     test_argument_validation();
     test_stop_during_probe(argv[1]);
+    test_success_snapshots(argv[1]);
     if (failures != 0) {
         fprintf(stderr, "%d supervisor test(s) failed.\n", failures);
         return 1;

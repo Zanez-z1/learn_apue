@@ -136,6 +136,8 @@ FFmpeg 工作进程启用 `-progress pipe:1`，由 `gatewayd` 解析 `frame`、`
 - 接收启动、停止和重启命令。
 - 管理通道状态机。
 - 保存最近一次错误、重启次数和最近进度时间。
+- 从各 supervisor 的同步观察回调复制状态快照；多通道阶段由管理器负责加锁，
+  不能让 HTTP 线程直接读取 supervisor 的临时快照。
 
 #### Pipeline Builder
 

@@ -322,6 +322,7 @@ CTest 中与 Phase 2 相关的测试：
 
 ```text
 gateway_channel_state_tests
+gateway_probe_tests
 gateway_process_tests
 gateway_single_channel_test
 gateway_stable_run_test
@@ -337,6 +338,17 @@ gateway_retry_exhaustion_test
 - 退避时间不超过配置上限。
 - 重试耗尽进入 `FAILED`。
 - 稳定事件和人工重新开始能够清零连续失败次数。
+
+`gateway_probe_tests` 验证：
+
+- ffprobe 参数以独立 argv 构造，不经过 shell。
+- RTSP transport 和源 URL 位于预期参数位置。
+- 解析 `codec_name`、`width` 和 `height`。
+- 同时接受 LF 和 CRLF 行结束符。
+- 缺失字段、非数字尺寸和解码器不匹配能够被识别。
+
+该测试目前不启动真实 ffprobe；进程执行、探测超时和 `PROBING` 集成将在下一
+增量增加端到端测试。
 
 `gateway_process_tests` 验证：
 

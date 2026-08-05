@@ -17,6 +17,7 @@ add_library(gateway_core
     src/pipeline/pipeline_builder.c
     src/monitor/progress_parser.c
     src/process/process_manager.c
+    src/probe/probe.c
 )
 
 target_include_directories(gateway_core PUBLIC include)
@@ -47,6 +48,13 @@ if(GATEWAY_BUILD_TESTS)
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
     add_test(NAME gateway_channel_state_tests COMMAND gateway_channel_state_tests)
     set_tests_properties(gateway_channel_state_tests PROPERTIES TIMEOUT 5)
+
+    add_executable(gateway_probe_tests tests/unit/probe_tests.c)
+    target_link_libraries(gateway_probe_tests PRIVATE gateway_core)
+    target_compile_options(gateway_probe_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_probe_tests COMMAND gateway_probe_tests)
+    set_tests_properties(gateway_probe_tests PROPERTIES TIMEOUT 5)
 
     add_executable(gateway_process_fixture tests/integration/process_fixture.c)
     target_compile_options(gateway_process_fixture PRIVATE

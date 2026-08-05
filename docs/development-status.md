@@ -52,8 +52,8 @@ git status --short --branch
 日期：2026-08-05
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：8/8 PASS
-ASan/UBSan：8/8 PASS
+常规 CTest：9/9 PASS
+ASan/UBSan：9/9 PASS
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 ```
@@ -85,6 +85,14 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - 达到稳定窗口后清零连续失败次数，保留总重启次数。
 - 增加持续 progress 端到端测试。
 
+### 当前增量：ffprobe 参数与结果解析
+
+- 使用独立参数数组构造 ffprobe 命令，不经过 shell。
+- 固定读取首个视频流的 `codec_name`、`width` 和 `height`。
+- 支持 LF 与 CRLF 输出，拒绝缺失或非法字段。
+- 校验 H.264/H.265 探测结果与配置的 RKMpp 解码器是否匹配。
+- 当前只完成纯逻辑和单元测试，尚未启动 ffprobe 子进程。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -107,7 +115,8 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 
 按顺序执行：
 
-1. 实现真实 `ffprobe` 输入探测，区分探测失败、探测超时和工作进程失败。
+1. 使用进程管理器执行 ffprobe，并接入 `PROBING`，区分探测失败、探测超时和
+   工作进程失败。
 2. 将 supervisor 从 `main.c` 拆分为独立通道模块。
 3. 完成单通道状态快照，为 HTTP 查询接口准备稳定数据模型。
 4. 进入多通道管理与配置重载。

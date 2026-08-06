@@ -527,7 +527,157 @@ ctest --test-dir build-tsan --output-on-failure \
 - 真实 MediaMTX 服务停止、启动及通道重新发布验证。
 - RK3588 多通道性能与稳定性验收。
 
-功能完成后，本节需要覆盖：
+### 6.3 开发机完成项审计
+
+| Phase 3 要求 | 开发机证据 | 状态 |
+| --- | --- | --- |
+| 多通道互不影响 | `gateway_channel_manager_tests`、`gateway_multi_channel_test` | `PASS` |
+| 状态机、退避序列和重试耗尽 | `gateway_channel_state_tests`、各 timeout/retry 测试 | `PASS` |
+| 工作进程异常退出 | worker failure、retry exhaustion 和两个恢复测试 | `PASS` |
+| 输入断开后独立恢复 | `gateway_input_recovery_tests`（夹具模拟） | `PASS` |
+| 发布端失败后独立恢复 | `gateway_publish_recovery_tests`（夹具模拟） | `PASS` |
+| SIGHUP 差异化重载 | `gateway_reload_tests`、`gateway_channel_manager_tests` | `PASS` |
+| 真实 RTSP/MediaMTX/RK3588 链路 | 当前开发机无对应环境 | `PENDING` |
+
+结论：Phase 3 开发机软件路径通过，但完整 Phase 3 仍为 `IN PROGRESS`。夹具测试证明
+状态机和隔离逻辑，不证明真实网络恢复、MediaMTX 重新发布或 RK3588 硬件链路。
+
+### 6.4 RK3588 实机验收清单
+
+以下项目当前均为 `PENDING`，只有在板卡上实际执行并保存日志后才能改为 `PASS`。
+
+前置条件：
+
+- 已通过本文档 Phase 0 环境检查和 Phase 1 单路 30 分钟媒体链路验收。
+- MediaMTX 作为独立服务运行，并确认实际 service 名称；以下示例使用 `mediamtx`。
+- 准备两个真实 RTSP 输入和两个不同输出路径 `cam01`、`cam02`。
+- 测试配置的 `max_retries` 和 `max_backoff_sec` 应允许在重试耗尽前人工恢复故障。
+- 配置文件放在 Git 仓库外，真实用户名和密码不得写入测试记录。
+
+构建并保存环境基线：
+
+```bash
+./scripts/check_media_env.sh | tee /tmp/phase3-media-env.log
+cmake -S . -B build-board -DCMAKE_BUILD_TYPE=Release
+cmake --build build-board --parallel
+ctest --test-dir build-board --output-on-failure
+```
+
+准备双通道配置后，避免把 URL 留在 shell 历史中：
+
+```bash
+read -rsp 'CAM01 RTSP URL: ' CAM01_RTSP_URL; echo
+read -rsp 'CAM02 RTSP URL: ' CAM02_RTSP_URL; echo
+export CAM01_RTSP_URL CAM02_RTSP_URL
+export PHASE3_CONFIG=/absolute/path/outside/repository/phase3.yaml
+export PHASE3_LOG=/tmp/gateway-phase3.log
+./build-board/gatewayd --config "$PHASE3_CONFIG" >"$PHASE3_LOG" 2>&1 &
+GATEWAY_PID=$!
+```
+
+确认日志中两个通道均进入 `RUNNING`，并从另一台机器连续播放 `cam01` 和 `cam02`。
+记录 RTSP 播放命令以及 WebRTC 播放页面，但不得记录输入密码。
+
+#### 6.4.1 单输入断流与恢复
+
+1. 保持 `cam01` 播放，停止 `cam02` 的上游 RTSP 源。
+2. 确认 `cam02` 进入 `BACKOFF`，退避值没有超过配置上限。
+3. 故障期间确认 `cam01` 持续播放，日志中没有新的 `cam01 restart_count`。
+4. 在重试耗尽前恢复 `cam02` 上游源。
+5. 确认 `cam02` 重新经历 `PROBING`、`STARTING`、`RUNNING`，输出重新可播放。
+
+通过标准：`cam02` 自动恢复，`cam01` 不重启且播放不中断。
+
+#### 6.4.2 工作进程崩溃与恢复
+
+从 `channel=cam02 pid=... state=STARTING` 日志取得当前 FFmpeg PID，只终止该明确
+PID，不要使用宽泛的 `pkill ffmpeg`：
+
+```bash
+kill -KILL <cam02-ffmpeg-pid>
+```
+
+通过标准：旧 PID 被回收，`cam02` 退避后使用新 PID 恢复，`cam01` 不重启且播放
+不中断。
+
+#### 6.4.3 MediaMTX 停止与恢复
+
+```bash
+sudo systemctl stop mediamtx
+sudo systemctl status mediamtx --no-pager
+sudo systemctl start mediamtx
+sudo systemctl status mediamtx --no-pager
+```
+
+停止期间两个发布通道均可能失败；`gatewayd` 不应尝试启动 MediaMTX。服务恢复后，
+两个通道应通过各自 supervisor 重新发布，RTSP 和 WebRTC 输出重新可播放。
+
+#### 6.4.4 SIGHUP 差异化重载
+
+只修改 `cam02` 的码率并保持 `cam01` 配置不变，然后执行：
+
+```bash
+kill -HUP "$GATEWAY_PID"
+```
+
+通过标准：日志摘要为一个未变化通道和一个重启通道；`cam01` PID 与播放保持不变，
+`cam02` 使用新 PID 和新码率恢复发布。随后写入一份非法候选配置再次发送 SIGHUP，
+确认配置被拒绝且两个现有通道继续运行。
+
+#### 6.4.5 停止与资源清理
+
+先从日志记录两个通道最后一次启动的工作进程 PID：
+
+```bash
+FINAL_CAM01_PID=$(sed -n 's/^channel=cam01 pid=\([0-9]*\) state=STARTING.*/\1/p' \
+  "$PHASE3_LOG" | tail -n 1)
+FINAL_CAM02_PID=$(sed -n 's/^channel=cam02 pid=\([0-9]*\) state=STARTING.*/\1/p' \
+  "$PHASE3_LOG" | tail -n 1)
+```
+
+再停止网关并检查这两个工作进程组：
+
+```bash
+kill -TERM "$GATEWAY_PID"
+wait "$GATEWAY_PID"
+GATEWAY_STATUS=$?
+echo "$GATEWAY_STATUS"
+if pgrep -a -g "$FINAL_CAM01_PID,$FINAL_CAM02_PID"; then
+  echo 'FAIL: worker process group remains'
+else
+  echo 'PASS: worker process groups were removed'
+fi
+```
+
+通过标准：`gatewayd` 退出码为 0，没有残留子进程或僵尸进程；日志不包含真实密码，
+每个通道都有停止或最终状态记录。完成后执行：
+
+```bash
+unset CAM01_RTSP_URL CAM02_RTSP_URL PHASE3_CONFIG PHASE3_LOG GATEWAY_PID
+unset FINAL_CAM01_PID FINAL_CAM02_PID GATEWAY_STATUS
+```
+
+实机记录至少填写：
+
+```text
+日期：
+提交：
+板卡与系统镜像：
+内核：
+FFmpeg-Rockchip：
+MediaMTX：
+输入源编码/分辨率/FPS：
+基线双路播放：PENDING
+cam02 输入断流恢复：PENDING
+cam02 工作进程崩溃恢复：PENDING
+MediaMTX 停止与恢复：PENDING
+SIGHUP 未变化通道不中断：PENDING
+SIGTERM 与资源清理：PENDING
+原始日志路径：
+遗留问题：
+```
+
+完整 Phase 3 需要覆盖：
 
 - 多个通道互不影响。
 - 输入流断开与恢复。

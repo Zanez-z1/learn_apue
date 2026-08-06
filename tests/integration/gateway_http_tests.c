@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -195,6 +196,45 @@ static int wait_for_channel_state(unsigned int port, const char *state,
     return -1;
 }
 
+static bool process_has_socket_fd(long pid)
+{
+    char directory_path[64];
+    DIR *directory;
+    struct dirent *entry;
+    bool found = false;
+
+    snprintf(directory_path, sizeof(directory_path), "/proc/%ld/fd", pid);
+    directory = opendir(directory_path);
+    if (directory == NULL) {
+        return true;
+    }
+    while ((entry = readdir(directory)) != NULL) {
+        char link_path[128];
+        char target[128];
+        ssize_t length;
+
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        if (snprintf(link_path, sizeof(link_path), "%s/%s", directory_path,
+                     entry->d_name) >= (int)sizeof(link_path)) {
+            found = true;
+            break;
+        }
+        length = readlink(link_path, target, sizeof(target) - 1U);
+        if (length < 0) {
+            continue;
+        }
+        target[length] = '\0';
+        if (strncmp(target, "socket:[", strlen("socket:[")) == 0) {
+            found = true;
+            break;
+        }
+    }
+    closedir(directory);
+    return found;
+}
+
 int main(int argc, char **argv)
 {
     char config_path[] = "/tmp/gateway-http-config-XXXXXX";
@@ -310,6 +350,10 @@ int main(int argc, char **argv)
                         "POST /v1/channels/cam01/restart HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
                         "HTTP/1.1 202 Accepted", "\"action\":\"restart\"") < 0 ||
         wait_for_channel_state(port, "RUNNING", started_pid, &final_pid) < 0) {
+        goto cleanup;
+    }
+    if (process_has_socket_fd(final_pid)) {
+        fprintf(stderr, "worker inherited an HTTP socket descriptor\n");
         goto cleanup;
     }
 

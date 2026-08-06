@@ -1095,6 +1095,8 @@ cmake --install build --prefix /tmp/rk-media-gateway-install-test
 - 主线程通过 signalfd 消费控制信号，TSan 不再报告处理器落入工作线程的数据竞争。
 - 子进程的 posix_spawn 属性恢复默认 SIGINT/SIGTERM/SIGHUP 和空信号掩码。
 - 最后一次 restart 后的 FFmpeg PID 已不存在，不遗留工作进程。
+- 最后一次 restart 发生在 HTTP listener 已建立之后；测试检查假 FFmpeg 的 `/proc/PID/fd`
+  不含 socket，防止监听或客户端描述符跨 exec 泄漏到工作进程。
 - HTTP 端口已经关闭，不能继续接受健康检查。
 - 日志不包含测试 URL 密码。
 

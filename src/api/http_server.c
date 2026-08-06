@@ -1,5 +1,5 @@
 /* Bounded HTTP/1.x parsing, JSON serialization, and local socket service. */
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include "gateway/http_server.h"
 
@@ -565,7 +565,7 @@ static void *run_server(void *context)
             break;
         }
         if (result > 0 && (descriptor.revents & POLLIN) != 0) {
-            int client = accept(server->listen_fd, NULL, NULL);
+            int client = accept4(server->listen_fd, NULL, NULL, SOCK_CLOEXEC);
 
             if (client >= 0) {
                 handle_connection(server, client);
@@ -627,7 +627,8 @@ static gw_status bind_listener(gw_http_server *server, gw_error *error)
     for (address = addresses; address != NULL; address = address->ai_next) {
         int option = 1;
 
-        server->listen_fd = socket(address->ai_family, address->ai_socktype,
+        server->listen_fd = socket(address->ai_family,
+                                   address->ai_socktype | SOCK_CLOEXEC,
                                    address->ai_protocol);
         if (server->listen_fd < 0) {
             continue;

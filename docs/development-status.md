@@ -393,6 +393,18 @@ Phase 0：PASS
 - 下一步在开发机完成常规和 sanitizer 回归，重新安装单元与配置后再进行正式 systemd
   启停、异常恢复和开机启动验收。
 
+### 本次增量：HTTP 描述符跨 exec 泄漏修复
+
+- systemd 监听审计发现 FFmpeg 持有 gatewayd 的 9080 监听 socket。原因是 HTTP listener
+  和 accept socket 创建时未原子设置 close-on-exec，后续通道重启的 posix_spawn 会继承
+  当时打开的网络描述符。
+- listener 改用 `SOCK_CLOEXEC` 创建，客户端改用 `accept4(..., SOCK_CLOEXEC)`，避免多线程
+  环境中先 accept 再 fcntl 的竞态窗口。
+- HTTP 端到端测试在 HTTP 已监听后执行通道 restart，并扫描最终假 FFmpeg 的 `/proc/PID/fd`；
+  工作进程若继承任何 socket 会直接失败。下一步完成三套回归并再次部署板卡。
+- 修复后完整常规 CTest 26/26、ASan/UBSan 26/26 和适用 TSan 7/7 PASS；下一步同步板卡
+  并用真实 FFmpeg `/proc/PID/fd` 复核 9080 socket 不再被继承。
+
 ## 5. 当前能力边界
 
 已经具备：

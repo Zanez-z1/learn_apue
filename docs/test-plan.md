@@ -701,6 +701,11 @@ SIGTERM 与资源清理：PENDING
 - 404、405、431 错误响应以及 URL/密码不进入 API 响应的安全边界。
 - `POST /v1/channels/{id}/start`、`stop` 和 `restart` 生命周期控制。
 - 控制命令与 SIGHUP 重载串行化，以及重复/并发命令的 409 冲突响应。
+- MediaMTX 录像配置生成、回放监听、自动删除参数和录像磁盘状态查询。
+- gatewayd/MediaMTX systemd 单元、非 root 权限边界、同步信号处理和优雅退出。
+
+开发机软件路径已经完成；本节保持 `IN PROGRESS` 是因为目标板卡上的真实媒体链路、
+录像和 systemd 生命周期尚未验收。
 
 ### 7.1 只读 HTTP 开发机验收
 
@@ -917,7 +922,61 @@ systemd-analyze verify：单元被解析；因 /usr/local/bin/gatewayd 和 media
 限制：未执行 enable、开机启动、异常自动恢复、真实 MediaMTX 停止或板卡设备权限验收
 ```
 
-功能完成后，本节需要覆盖：
+### 7.6 Phase 4 开发机最终审计
+
+三套动态测试必须依次执行，不要并行运行。每套都包含带严格时间阈值的进程监督测试，
+并行运行多个 sanitizer 构建会互相争用 CPU，造成与功能无关的 progress 超时。
+
+执行：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+
+cmake --build build-sanitize --parallel
+ASAN_OPTIONS=detect_leaks=0 \
+  ctest --test-dir build-sanitize --output-on-failure
+
+cmake --build build-tsan --parallel
+ctest --test-dir build-tsan --output-on-failure \
+  -R 'gateway_(recording_status|http_server|http|channel_manager|reload)_tests'
+
+cmake -S . -B build-analyzer -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS=-fanalyzer
+cmake --build build-analyzer --clean-first --parallel
+
+git diff --check
+rg -n '\(void\)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(' \
+  --glob '*.[ch]' .
+rg -n 'system[[:space:]]*\(|popen[[:space:]]*\(' src include
+git grep -n -E '://[^/@[:space:]]+:[^/@[:space:]]+@' -- \
+  ':!tests/**' ':!docs/**' ':!README.md' ':!ARCHITECTURE.md' \
+  ':!deploy/systemd/gateway.env.example'
+```
+
+静态分析结果需人工沿资源所有权复核，不能只统计告警数。本次检查确认：HTTP 客户端由
+服务器循环关闭；监听描述符由服务器停止/销毁路径关闭；进程启动失败路径关闭四个管道
+端点；单字符转义缓冲区在读取前已初始化。GCC 仍报告 7 条描述符所有权告警和 2 条
+单字符缓冲区告警，因此记录为“已复核”，不记录为“零告警”。
+
+最终验收记录：
+
+```text
+日期：2026-08-06
+测试机器：x86_64 Arch Linux 开发机
+常规 CTest：26/26 PASS（单独完整运行）
+ASan/UBSan：26/26 PASS（LeakSanitizer 因 ptrace 环境关闭）
+TSan：录像状态/HTTP/通道管理器/重载相关 5/5 PASS
+GCC -fanalyzer：全量构建完成；9 条告警已按上述所有权和数据流人工复核
+安全检查：git diff、显式 (void) 调用、shell 启动和受管文件凭据 URL 检查 PASS
+限制：未启动真实 MediaMTX，未连接真实 RTSP/RK3588，未运行真实 systemd 生命周期
+```
+
+补充记录：首次把常规、ASan/UBSan、TSan 三套测试并行运行时，常规
+`gateway_channel_manager_tests` 因 CPU 饥饿触发 1 秒 progress 超时；随后在正常的单独
+完整运行中 26/26 PASS。该结果用于约束测试执行方式，不冒充三套并行压力测试通过。
+
+目标板卡仍需要覆盖：
 
 - API 默认只监听回环地址。
 - MediaMTX 录像与回放。

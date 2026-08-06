@@ -22,6 +22,8 @@ typedef struct {
     /* Optional manager-owned stop source; nonzero takes priority over stop_signal. */
     gw_supervisor_stop_check stop_check;
     void *stop_context;
+    /* Test/one-shot mode: treat an unsolicited zero exit as terminal success. */
+    bool stop_on_clean_exit;
     gw_supervisor_observer observer;
     void *observer_context;
 } gw_supervisor_options;

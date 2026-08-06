@@ -672,6 +672,23 @@ GATEWAY_PID=$!
 
 通过标准：`cam02` 自动恢复，`cam01` 不重启且播放不中断。
 
+常驻进程还必须覆盖“上游 EOF 导致 FFmpeg 退出码为 0”的情况。退出码 0 只说明 FFmpeg
+自身没有报告命令错误，并不表示常驻媒体通道收到停止请求；此时仍应记录
+`worker_failure`、进入 `BACKOFF` 并重新探测。`clean_exit -> STOPPED` 只允许出现在显式
+`--exit-when-idle` 的一次性测试模式或真实 stop 请求之外的既定测试路径。
+
+开发机回归执行：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(supervisor|channel_manager|input_recovery|publish_recovery)_tests'
+```
+
+2026-08-06 首次 RK3588 单路实测记录：PC 摄像头源停止后，修复前二进制的 FFmpeg 在
+87.44 秒进度处以 0 退出，通道错误进入 `STOPPED/clean_exit`。该次结果为 `FAIL`，是修复
+触发证据，不得作为恢复通过记录。修复后的板卡复测仍为 `PENDING`。
+
 #### 6.4.2 工作进程崩溃与恢复
 
 从 `channel=cam02 pid=... state=STARTING` 日志取得当前 FFmpeg PID，只终止该明确

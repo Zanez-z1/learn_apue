@@ -93,6 +93,7 @@ void gw_supervisor_options_init(gw_supervisor_options *options)
     options->stop_signal = NULL;
     options->stop_check = NULL;
     options->stop_context = NULL;
+    options->stop_on_clean_exit = false;
     options->observer = NULL;
     options->observer_context = NULL;
 }
@@ -689,8 +690,9 @@ static worker_attempt_result run_worker_attempt(
     if (process.reaped) {
         attempt.exit_code = gw_process_exit_code(&process);
         if (attempt.outcome == ATTEMPT_PENDING) {
-            attempt.outcome = attempt.exit_code == 0 ? ATTEMPT_CLEAN_EXIT
-                                                     : ATTEMPT_WORKER_FAILURE;
+            attempt.outcome = attempt.exit_code == 0 && options->stop_on_clean_exit
+                                  ? ATTEMPT_CLEAN_EXIT
+                                  : ATTEMPT_WORKER_FAILURE;
         }
     }
     status = gw_process_close(&process, &error);

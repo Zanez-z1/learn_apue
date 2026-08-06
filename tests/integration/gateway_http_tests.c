@@ -250,7 +250,11 @@ int main(int argc, char **argv)
         goto cleanup;
     }
     if (wait_for_http_port(log_path, &port) < 0) {
-        fprintf(stderr, "gateway did not publish an HTTP port\n");
+        if (read_file(log_path, log, sizeof(log)) >= 0 && log[0] != '\0') {
+            fprintf(stderr, "gateway did not publish an HTTP port:\n%s", log);
+        } else {
+            fprintf(stderr, "gateway did not publish an HTTP port\n");
+        }
         goto cleanup;
     }
 

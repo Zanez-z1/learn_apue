@@ -72,6 +72,7 @@ static void test_default_options(void)
     CHECK(options.stop_signal == NULL);
     CHECK(options.stop_check == NULL);
     CHECK(options.stop_context == NULL);
+    CHECK(!options.stop_on_clean_exit);
     CHECK(options.observer == NULL);
     CHECK(options.observer_context == NULL);
 }
@@ -126,6 +127,7 @@ static void test_success_snapshots(const char *fixture)
     gw_supervisor_options_init(&options);
     options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
+    options.stop_on_clean_exit = true;
     options.observer = capture_snapshot;
     options.observer_context = &capture;
     gw_config_init(&config);
@@ -149,6 +151,29 @@ static void test_success_snapshots(const char *fixture)
     CHECK(capture.last.process_kind == GW_CHANNEL_PROCESS_NONE);
 }
 
+static void test_unsolicited_zero_exit_retries(const char *fixture)
+{
+    snapshot_capture capture = {0};
+    gw_supervisor_options options;
+    gw_config config;
+    gw_channel_config channel;
+
+    gw_supervisor_options_init(&options);
+    options.ffprobe_binary = fixture;
+    options.ffmpeg_binary = fixture;
+    options.observer = capture_snapshot;
+    options.observer_context = &capture;
+    gw_config_init(&config);
+    config.defaults.max_retries = 0;
+    make_channel(&channel);
+    CHECK(gw_supervisor_run(&config, &channel, &options) == 1);
+    CHECK(capture.last.state == GW_CHANNEL_FAILED);
+    CHECK(strcmp(capture.last.last_event, "worker_failure") == 0);
+    CHECK(capture.last.has_exit_code);
+    CHECK(capture.last.last_exit_code == 0);
+    CHECK(capture.last.consecutive_failures == 1U);
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) {
@@ -159,6 +184,7 @@ int main(int argc, char **argv)
     test_argument_validation();
     test_stop_during_probe(argv[1]);
     test_success_snapshots(argv[1]);
+    test_unsolicited_zero_exit_retries(argv[1]);
     if (failures != 0) {
         fprintf(stderr, "%d supervisor test(s) failed.\n", failures);
         return 1;

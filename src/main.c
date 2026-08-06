@@ -278,6 +278,7 @@ int main(int argc, char **argv)
             print_mediamtx = true;
         } else if (strcmp(argv[argument], "--exit-when-idle") == 0) {
             exit_when_idle = true;
+            options.stop_on_clean_exit = true;
         } else if (strcmp(argv[argument], "--ffprobe-binary") == 0 &&
                    argument + 1 < argc) {
             options.ffprobe_binary = argv[++argument];

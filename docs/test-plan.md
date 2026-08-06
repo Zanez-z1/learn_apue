@@ -1245,7 +1245,7 @@ TSan 7/7 PASS。ASan 首次在受限沙箱中为 25/26，唯一失败项因回�
 
 ## 8. Phase 5：性能、稳定性与最终交付
 
-状态：`IN PROGRESS`
+状态：`SOFTWARE COMPLETE`；双真实输入及 2/24 小时长稳按用户要求后置，音频不在范围内。
 
 测试矩阵至少包含：
 
@@ -1430,7 +1430,8 @@ MPP+RGA 正式短测：CPU 75.2%/85.0%，RSS 18.1/18.1 MiB，497.70fps，19.9x�
 
 原始证据位于板卡仓库外的
 `/home/cat/rk3588-acceptance/2026-08-06/phase5/`。微基准是最大吞吐测试，不代表
-在线网关会以 493fps 输出；正式在线输出仍为 25fps。端到端延迟和其他矩阵项保持 PENDING。
+在线网关会以 493fps 输出；正式在线输出仍为 25fps。分辨率、码率、容量和时间戳延迟
+由后续 8.3～8.6 分别补齐。
 
 ### 8.3 固定样本基准运行器
 
@@ -1696,6 +1697,50 @@ Phase 4/5 已执行的实板记录。
 演示证据：引用 Phase 4 真实 PC 摄像头、播放/API/录像/恢复/systemd 记录及 Phase 5 时间戳截图
 未伪造项：双真实输入、30 分钟、2/24 小时和音频保持未验收
 结果：PASS
+```
+
+### 8.8 最终发布门禁与静态分析收口
+
+发布前依次执行，不并行运行三套动态测试，以免时间敏感用例被 CPU 饥饿干扰：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build-sanitize --output-on-failure
+ctest --test-dir build-tsan --output-on-failure \
+  -R 'gateway_(recording_status|http_server|http|channel_manager|reload|input_recovery|publish_recovery)_tests'
+cmake --build build-analyzer --clean-first --parallel
+```
+
+安全检查还包括：所有 Bash 脚本 `bash -n`、`git diff --check`、受管文件私钥/常见令牌
+模式、非示例凭据 URL、`system()`/`popen()`、显式 `(void)函数调用` 和脚本 `eval` 扫描。
+示例配置和测试夹具可以使用明显虚构密码，但运行日志和真实地址密码不得进入 Git。
+
+GCC `-fanalyzer` 首次发现基准 FFmpeg 夹具在换行写入失败时因 `||` 短路而跳过
+`fclose()`；修复为分别记录写入/关闭结果并无条件关闭。修复后仍有 6 条既有跨函数告警：
+HTTP listener 两条、渲染单字符缓冲区两条、工作进程管道失败清理两条。逐条沿停止/销毁、
+已初始化字符数组和 `fail` 标签的四端点关闭路径复核，并由 ASan/UBSan、TSan 和进程清理
+测试覆盖；这些记录为已复核的分析器限制，不写成“零告警”。
+
+最终记录：
+
+```text
+日期：2026-08-06
+Debug 常规 CTest：31/31 PASS
+Release 构建：无编译警告；完整 CTest 31/31 PASS
+ASan/UBSan：31/31 PASS（LeakSanitizer 因 ptrace 环境关闭）
+适用 TSan：7/7 PASS
+基准夹具关闭缺口：已修复；相关行为测试 1/1 PASS
+GCC -fanalyzer：全量构建完成；剩余 6 条跨函数告警人工复核
+临时安装树：PASS；程序、配置、单元、文档和脚本齐全
+部署契约：PASS；开发机 systemd-analyze 仅因未真实安装绝对路径程序而非零
+脚本语法与安全扫描：PASS
+板卡运行时代码：Release 完整 CTest 31/31 PASS；GOP=50 与 RTSP/TCP 实测通过
+板卡最终状态：低延迟验收结束时服务 enabled/inactive，无媒体或 zombie 进程
+连接说明：最终文档提交前 SSH ControlMaster 失效，未重复同步纯文档变更
+后置验收：双真实输入、30 分钟、2 小时和 24 小时；不得写成已通过
+排除范围：音频
+结果：PASS（原定软件功能与短时实板验证范围）
 ```
 
 ## 9. 阶段验收记录模板

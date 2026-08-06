@@ -20,6 +20,8 @@ static int record_arguments(int argc, char **argv)
 {
     const char *log_path = getenv("GW_BENCH_FIXTURE_LOG");
     FILE *stream;
+    bool write_failed;
+    bool close_failed;
     int index;
 
     if (log_path == NULL) {
@@ -39,7 +41,9 @@ static int record_arguments(int argc, char **argv)
             return -1;
         }
     }
-    if (fputc('\n', stream) == EOF || fclose(stream) != 0) {
+    write_failed = fputc('\n', stream) == EOF;
+    close_failed = fclose(stream) != 0;
+    if (write_failed || close_failed) {
         return -1;
     }
     return 0;

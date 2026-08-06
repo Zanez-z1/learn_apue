@@ -14,10 +14,15 @@
 #include <unistd.h>
 
 typedef struct {
-    atomic_bool saw_input_failure;
+    atomic_bool saw_worker_failure;
     atomic_bool saw_recovered_running;
     atomic_bool healthy_restarted;
 } recovery_observations;
+
+typedef enum {
+    RECOVERY_INPUT = 0,
+    RECOVERY_PUBLISH
+} recovery_kind;
 
 static int failures;
 
@@ -51,7 +56,7 @@ static void make_channel(gw_channel_config *channel, const char *id,
     snprintf(channel->output.path, sizeof(channel->output.path), "%s", id);
 }
 
-static void make_config(gw_config *config)
+static void make_config(gw_config *config, recovery_kind kind)
 {
     gw_config_init(config);
     config->defaults.startup_timeout_sec = 1;
@@ -62,7 +67,13 @@ static void make_config(gw_config *config)
     config->defaults.max_backoff_sec = 1;
     config->channel_count = 2U;
     make_channel(&config->channels[0], "cam01", "hold-healthy");
-    make_channel(&config->channels[1], "cam02", "recover-once");
+    make_channel(&config->channels[1], "cam02",
+                 kind == RECOVERY_INPUT ? "recover-once" : "live-publish");
+    if (kind == RECOVERY_PUBLISH) {
+        snprintf(config->channels[1].output.path,
+                 sizeof(config->channels[1].output.path), "%s",
+                 "publish-recover-once");
+    }
 }
 
 static void observe_recovery(const gw_channel_snapshot *snapshot, void *context)
@@ -79,7 +90,7 @@ static void observe_recovery(const gw_channel_snapshot *snapshot, void *context)
     if (snapshot->state == GW_CHANNEL_BACKOFF &&
         strcmp(snapshot->last_event, "worker_failure") == 0 &&
         snapshot->has_exit_code && snapshot->last_exit_code == 9) {
-        atomic_store(&observations->saw_input_failure, true);
+        atomic_store(&observations->saw_worker_failure, true);
     }
     if (snapshot->state == GW_CHANNEL_RUNNING &&
         snapshot->total_restarts == 1U) {
@@ -108,7 +119,7 @@ static bool wait_for_recovery(gw_channel_manager *manager,
 
 int main(int argc, char **argv)
 {
-    char marker_path[] = "/tmp/gateway-input-recovery-XXXXXX";
+    char marker_path[] = "/tmp/gateway-fault-recovery-XXXXXX";
     recovery_observations observations;
     gw_channel_manager *manager = NULL;
     gw_supervisor_options options;
@@ -117,13 +128,22 @@ int main(int argc, char **argv)
     gw_config config;
     gw_error error = {0};
     gw_status status;
+    const char *marker_environment;
+    const char *kind_name;
+    recovery_kind kind;
     int marker_descriptor;
     bool manager_started = false;
 
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s PROCESS_FIXTURE\n", argv[0]);
+    if (argc != 3 ||
+        (strcmp(argv[2], "input") != 0 && strcmp(argv[2], "publish") != 0)) {
+        fprintf(stderr, "usage: %s PROCESS_FIXTURE input|publish\n", argv[0]);
         return 2;
     }
+    kind = strcmp(argv[2], "input") == 0 ? RECOVERY_INPUT : RECOVERY_PUBLISH;
+    kind_name = kind == RECOVERY_INPUT ? "input" : "publish";
+    marker_environment = kind == RECOVERY_INPUT
+                             ? "GW_FIXTURE_RECOVERY_FILE"
+                             : "GW_FIXTURE_PUBLISH_RECOVERY_FILE";
     marker_descriptor = mkstemp(marker_path);
     if (marker_descriptor < 0) {
         perror("cannot reserve recovery marker path");
@@ -131,15 +151,15 @@ int main(int argc, char **argv)
     }
     close(marker_descriptor);
     unlink(marker_path);
-    if (setenv("GW_FIXTURE_RECOVERY_FILE", marker_path, 1) < 0) {
+    if (setenv(marker_environment, marker_path, 1) < 0) {
         perror("cannot configure recovery marker path");
         return 1;
     }
 
-    atomic_init(&observations.saw_input_failure, false);
+    atomic_init(&observations.saw_worker_failure, false);
     atomic_init(&observations.saw_recovered_running, false);
     atomic_init(&observations.healthy_restarted, false);
-    make_config(&config);
+    make_config(&config, kind);
     gw_supervisor_options_init(&options);
     options.ffprobe_binary = argv[1];
     options.ffmpeg_binary = argv[1];
@@ -156,7 +176,7 @@ int main(int argc, char **argv)
     if (manager_started) {
         CHECK(wait_for_recovery(manager, &recovered));
         CHECK(access(marker_path, F_OK) == 0);
-        CHECK(atomic_load(&observations.saw_input_failure));
+        CHECK(atomic_load(&observations.saw_worker_failure));
         CHECK(atomic_load(&observations.saw_recovered_running));
         CHECK(!atomic_load(&observations.healthy_restarted));
         CHECK(gw_channel_manager_get_snapshot(manager, "cam01", &healthy,
@@ -173,12 +193,13 @@ int main(int argc, char **argv)
     }
 
     gw_channel_manager_destroy(manager);
-    unsetenv("GW_FIXTURE_RECOVERY_FILE");
+    unsetenv(marker_environment);
     unlink(marker_path);
     if (failures != 0) {
-        fprintf(stderr, "%d input recovery test(s) failed.\n", failures);
+        fprintf(stderr, "%d %s recovery test(s) failed.\n", failures,
+                kind_name);
         return 1;
     }
-    printf("Input recovery isolation test passed.\n");
+    printf("Recovery isolation test passed (%s).\n", kind_name);
     return 0;
 }

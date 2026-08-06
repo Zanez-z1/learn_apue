@@ -43,9 +43,9 @@ static int run_probe_fixture(int argc, char **argv)
     return 0;
 }
 
-static int claim_recovery_failure(void)
+static int claim_recovery_failure(const char *environment_name)
 {
-    const char *marker_path = getenv("GW_FIXTURE_RECOVERY_FILE");
+    const char *marker_path = getenv(environment_name);
     int descriptor;
 
     if (marker_path == NULL || marker_path[0] == '\0') {
@@ -64,11 +64,13 @@ int main(int argc, char **argv)
     if (argc > 2) {
         const char *mode = getenv("GW_FIXTURE_MODE");
         const char *input_url = NULL;
+        const char *output_url = argv[argc - 1];
         const struct timespec progress_interval = {
             .tv_sec = 0,
             .tv_nsec = 200000000L
         };
-        int recovery_attempt = -2;
+        int input_recovery_attempt = -2;
+        int publish_recovery_attempt = -2;
         int index;
 
         if (is_probe_command(argc, argv)) {
@@ -81,9 +83,19 @@ int main(int argc, char **argv)
             }
         }
         if (input_url != NULL && strstr(input_url, "/recover-once") != NULL) {
-            recovery_attempt = claim_recovery_failure();
-            if (recovery_attempt < 0) {
-                fprintf(stderr, "fixture recovery marker is unavailable\n");
+            input_recovery_attempt =
+                claim_recovery_failure("GW_FIXTURE_RECOVERY_FILE");
+            if (input_recovery_attempt < 0) {
+                fprintf(stderr, "fixture input recovery marker is unavailable\n");
+                return 10;
+            }
+        }
+        if (strstr(output_url, "/publish-recover-once") != NULL) {
+            publish_recovery_attempt =
+                claim_recovery_failure("GW_FIXTURE_PUBLISH_RECOVERY_FILE");
+            if (publish_recovery_attempt < 0) {
+                fprintf(stderr,
+                        "fixture publish recovery marker is unavailable\n");
                 return 10;
             }
         }
@@ -109,7 +121,7 @@ int main(int argc, char **argv)
         fflush(stdout);
         if ((mode != NULL && strcmp(mode, "stall") == 0) ||
             (input_url != NULL && strstr(input_url, "/hold") != NULL) ||
-            recovery_attempt == 0) {
+            input_recovery_attempt == 0 || publish_recovery_attempt == 0) {
             for (;;) {
                 pause();
             }
@@ -121,7 +133,8 @@ int main(int argc, char **argv)
         return (mode != NULL && strcmp(mode, "fail") == 0) ||
                        (input_url != NULL &&
                         strstr(input_url, "/worker-fail") != NULL) ||
-                       recovery_attempt == 1
+                       input_recovery_attempt == 1 ||
+                       publish_recovery_attempt == 1
                    ? 9
                    : 0;
     }

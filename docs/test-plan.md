@@ -308,7 +308,7 @@ scale_rkrga：PASS
 
 ## 4. Phase 1：手工跑通单路媒体链路
 
-状态：`IN PROGRESS`
+状态：`COMPLETE`（按用户批准的 5 分钟以上实机窗口）
 
 功能开发和板卡环境准备完成后，本节需要补充：
 
@@ -316,15 +316,15 @@ scale_rkrga：PASS
 - 本地文件硬件转码命令。
 - RTSP 输入和 MediaMTX 发布命令。
 - RTSP、WebRTC 播放验证方法。
-- 连续运行 30 分钟的日志和结果。
+- 连续运行至少 5 分钟的日志和结果；30 分钟长稳留到后续压力测试。
 - CPU、RSS、FPS、丢帧和错误记录。
 
-通过标准：单路 1080p 视频连续硬件转码和播放 30 分钟。
+当前通过标准：单路 1080p 视频连续硬件转码和播放至少 5 分钟。原 30 分钟标准由用户在
+2026-08-06 明确取消本轮执行，记录为 `SKIPPED`，不得写成 PASS。
 
 ### 4.1 真实 PC 摄像头 5 分钟冒烟验收
 
-本增量按当前执行顺序先验证至少 5 分钟，原有 30 分钟通过标准保留到所有 Phase 4
-功能和故障恢复完成后执行。PC 集成摄像头原生最高支持 MJPEG 1280×720@30fps，不得
+本增量验证至少 5 分钟。PC 集成摄像头原生最高支持 MJPEG 1280×720@30fps，不得
 写成原生 1080p；PC FFmpeg 将真实画面上采样并编码为 H.264 1920×1080@25fps，再通过
 同网段临时 MediaMTX 提供真实 RTSP 输入：
 
@@ -353,7 +353,7 @@ RTSP：PASS；PC FFmpeg 实际读取板卡 H.264 1920x1080@25 输出并正常退
 WebRTC：PASS；MediaMTX 记录 peer connection established 和读取 cam01；用户确认可见画面
 主观 WebRTC 延迟：约 1～2 秒，尚未进行低延迟专项优化
 音频：不在当前链路中；gateway FFmpeg 使用 -an，输出与录像均只有视频
-结果：PASS（至少 5 分钟摄像头/RTSP/WebRTC 冒烟）；PENDING（30 分钟最终长稳）
+结果：PASS（至少 5 分钟摄像头/RTSP/WebRTC）；SKIPPED（30 分钟长稳，用户取消本轮执行）
 ```
 
 运行期间 FFmpeg 发布端先出现一次 `461 Unsupported Transport`，随后自动使用可接受的
@@ -370,7 +370,7 @@ WebRTC：PASS；MediaMTX 记录 peer connection established 和读取 cam01；�
 
 ## 5. Phase 2：单通道 gatewayd
 
-状态：`IN PROGRESS`
+状态：`COMPLETE`
 
 当前已经实现：
 
@@ -387,10 +387,10 @@ WebRTC：PASS；MediaMTX 记录 peer connection established 和读取 cam01；�
 - 启动 FFmpeg 前执行 ffprobe，并校验视频编码、宽度和高度。
 - 独立的探测超时，以及探测失败、编码不匹配和探测重试事件。
 
-尚未实现：
+后续 Phase 4 增量已补齐：
 
-- 面向外部用户的通道状态查询接口。
-- RK3588 板卡上的真实 RTSP 输入探测和硬件媒体链路验收。
+- 面向外部用户的通道状态查询接口：PASS。
+- RK3588 板卡上的真实 RTSP 输入探测和单路硬件媒体链路验收：PASS。
 
 ### 5.1 开发机进程管理集成测试
 
@@ -510,6 +510,9 @@ gateway_probe_retry_exhaustion_test
 
 通过标准：不手工执行 FFmpeg，通过 `gatewayd` 启停一路真实转码。
 
+当前结论：后续 RK3588 实机记录证明 `gatewayd` 已完成单路真实转码启停，Phase 2 为
+`COMPLETE`；上面的“限制”只描述 2026-08-05 当次开发机增量，不是当前限制。
+
 ## 6. Phase 3：多通道与异常恢复
 
 状态：`IN PROGRESS`
@@ -621,18 +624,19 @@ ctest --test-dir build-tsan --output-on-failure \
 | 输入断开后独立恢复 | `gateway_input_recovery_tests`（夹具模拟） | `PASS` |
 | 发布端失败后独立恢复 | `gateway_publish_recovery_tests`（夹具模拟） | `PASS` |
 | SIGHUP 差异化重载 | `gateway_reload_tests`、`gateway_channel_manager_tests` | `PASS` |
-| 真实 RTSP/MediaMTX/RK3588 链路 | 当前开发机无对应环境 | `PENDING` |
+| 真实 RTSP/MediaMTX/RK3588 链路 | RK3588 单路故障记录 | `PASS`（单路） |
 
-结论：Phase 3 开发机软件路径通过，但完整 Phase 3 仍为 `IN PROGRESS`。夹具测试证明
-状态机和隔离逻辑，不证明真实网络恢复、MediaMTX 重新发布或 RK3588 硬件链路。
+结论：Phase 3 开发机软件路径和 RK3588 单路真实故障恢复通过，但完整 Phase 3 仍为
+`IN PROGRESS`。双通道隔离由夹具证明，尚未用两个真实输入完成板卡验证和性能测试。
 
 ### 6.4 RK3588 实机验收清单
 
-以下项目当前均为 `PENDING`，只有在板卡上实际执行并保存日志后才能改为 `PASS`。
+以下清单用于双真实输入最终验收。单路输入断流、工作进程崩溃和 MediaMTX 恢复已经在
+板卡执行并记录；双通道互不影响仍为 `PENDING`。
 
 前置条件：
 
-- 已通过本文档 Phase 0 环境检查和 Phase 1 单路 30 分钟媒体链路验收。
+- 已通过本文档 Phase 0 环境检查和 Phase 1 单路 5 分钟以上媒体链路验收。
 - MediaMTX 作为独立服务运行，并确认实际 service 名称；以下示例使用 `mediamtx`。
 - 准备两个真实 RTSP 输入和两个不同输出路径 `cam01`、`cam02`。
 - 测试配置的 `max_retries` 和 `max_backoff_sec` 应允许在重试耗尽前人工恢复故障。
@@ -799,7 +803,7 @@ WebRTC 恢复：PASS；MediaMTX 记录来自 PC 的会话建立并读取 cam01 H
 音轨：无；当前链路使用 -an，本项只验收视频恢复
 多通道互不影响：开发机夹具 PASS；本次实机只有一个真实输入，未伪造双路结果
 SIGHUP 差异化重载：本轮未重复，PENDING
-SIGTERM 与 systemd 资源清理：PENDING，归入下一 systemd 增量
+SIGTERM 与 systemd 资源清理：PASS，证据见 Phase 4 systemd 生命周期记录
 原始日志：/home/cat/rk3588-acceptance/2026-08-06/phase3-*.log
 ```
 
@@ -817,7 +821,7 @@ SIGTERM 与 systemd 资源清理：PENDING，归入下一 systemd 增量
 
 ## 7. Phase 4：控制接口、录像和服务化
 
-状态：`IN PROGRESS`
+状态：`COMPLETE`
 
 当前已经实现：
 
@@ -830,8 +834,8 @@ SIGTERM 与 systemd 资源清理：PENDING，归入下一 systemd 增量
 - MediaMTX 录像配置生成、回放监听、自动删除参数和录像磁盘状态查询。
 - gatewayd/MediaMTX systemd 单元、非 root 权限边界、同步信号处理和优雅退出。
 
-开发机软件路径已经完成；本节保持 `IN PROGRESS` 是因为目标板卡上的真实媒体链路、
-录像和 systemd 生命周期尚未验收。
+开发机软件路径与目标板卡单路真实媒体、录像、故障恢复和 systemd 生命周期均已验收。
+30 分钟长稳、双真实输入和音频不在本轮完成范围内，限制在各自记录中明确保留。
 
 ### 7.1 只读 HTTP 开发机验收
 
@@ -1151,8 +1155,24 @@ MediaMTX SIGKILL：NRestarts=1，新 PID 843359；gatewayd PID 841273 不变，P
 重新发布：工作 PID 843273，H.264 1920x1080，avg 25fps，PASS
 WebRTC：PC 会话在 MediaMTX 恢复后重新建立并读取 cam01，PASS
 录像/回放：恢复后继续生成非空 MP4，playback 返回新时间段，PASS
-开机启动：PENDING
+整机重启：PASS；boot ID 从 761393ed-c372-439d-b7a8-afa94292ec7c 变为
+           7ecb42c7-e1e2-45b6-b0b6-f8cfd51ef9a6
+开机启动：PASS；两个 enabled 服务在新系统启动约 4 秒后自动 active
+网络就绪：启动初期 probe 按 1/2/4/8 秒退避；网络恢复后自动 RUNNING
+重启后稳定窗口：6 分 12 秒，frame=9423，fps=25.19，speed=1.01，drop=0
+进程：gatewayd/MediaMTX/FFmpeg 各 1 个，父子关系正确，zombie=0
+最终资源样本：CPU 约 0.1%/15.2%/15.7%，RSS 约 2.2/55.1/20.8 MiB，41.6°C
+最终输出：H.264 1920x1080，25/1 fps；录像状态 ok
+安全：未发现凭据 URL；配置为 0640、环境文件 0600；unit verify 无项目告警
+systemd security：两个服务均 6.5 MEDIUM
+日志说明：浏览器慢读出现 WebRTC 丢帧告警，录像器发生一次时钟漂移重置；
+          12:48 后无新的应用告警，媒体和录像持续正常
+30 分钟长稳：SKIPPED（用户明确取消本轮执行，未标记 PASS）
+验收清理：两个服务保持 enabled，优雅停止后均 inactive/ExecMainStatus=0；
+          板卡 gatewayd/FFmpeg/MediaMTX/zombie 均为 0；PC 临时推流和 MediaMTX 已停止
+结果：PASS（Phase 4 修订后的 5 分钟以上单路实机范围）
 原始日志：/home/cat/rk3588-acceptance/2026-08-06/phase4-systemd-*.log
+          /home/cat/rk3588-acceptance/2026-08-06/phase4-five-minute-final.log
 ```
 
 ### 7.6 Phase 4 开发机最终审计
@@ -1172,7 +1192,7 @@ ASAN_OPTIONS=detect_leaks=0 \
 
 cmake --build build-tsan --parallel
 ctest --test-dir build-tsan --output-on-failure \
-  -R 'gateway_(recording_status|http_server|http|channel_manager|reload)_tests'
+  -R 'gateway_(recording_status|http_server|http|channel_manager|reload|input_recovery|publish_recovery)_tests'
 
 cmake -S . -B build-analyzer -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_FLAGS=-fanalyzer
@@ -1199,24 +1219,29 @@ git grep -n -E '://[^/@[:space:]]+:[^/@[:space:]]+@' -- \
 测试机器：x86_64 Arch Linux 开发机
 常规 CTest：26/26 PASS（单独完整运行）
 ASan/UBSan：26/26 PASS（LeakSanitizer 因 ptrace 环境关闭）
-TSan：录像状态/HTTP/通道管理器/重载相关 5/5 PASS
+TSan：适用的录像/HTTP/通道管理器/重载/故障恢复测试 7/7 PASS
 GCC -fanalyzer：全量构建完成；9 条告警已按上述所有权和数据流人工复核
 安全检查：git diff、显式 (void) 调用、shell 启动和受管文件凭据 URL 检查 PASS
-限制：未启动真实 MediaMTX，未连接真实 RTSP/RK3588，未运行真实 systemd 生命周期
+实板补充：真实 MediaMTX、PC 摄像头 RTSP、RK3588 MPP/RGA 和 systemd 生命周期 PASS
+限制：无音频；未执行双真实输入与 30 分钟长稳；LeakSanitizer 受 ptrace 环境限制
 ```
 
 补充记录：首次把常规、ASan/UBSan、TSan 三套测试并行运行时，常规
 `gateway_channel_manager_tests` 因 CPU 饥饿触发 1 秒 progress 超时；随后在正常的单独
 完整运行中 26/26 PASS。该结果用于约束测试执行方式，不冒充三套并行压力测试通过。
 
-目标板卡仍需要覆盖：
+2026-08-06 文档收尾后再次依次执行三套门禁：常规 26/26、ASan/UBSan 26/26、适用
+TSan 7/7 PASS。ASan 首次在受限沙箱中为 25/26，唯一失败项因回环 bind 返回
+`Operation not permitted`；在获准使用本机回环后完整复跑为 26/26。
 
-- API 默认只监听回环地址。
-- MediaMTX 录像与回放。
-- 磁盘空间不足处理。
-- systemd 开机启动、停止和异常恢复。
+目标板卡覆盖结果：
 
-通过标准：设备重启后服务自动启动，接口可用，异常退出后 systemd 能恢复服务。
+- API 默认只监听回环地址：PASS。
+- MediaMTX 录像与回放：PASS。
+- 磁盘空间不足处理：PASS（阈值模拟，不写满磁盘）。
+- systemd 开机启动、停止和异常恢复：PASS。
+
+通过标准：设备重启后服务自动启动，接口可用，异常退出后 systemd 能恢复服务。结果：PASS。
 
 ## 8. Phase 5：性能、稳定性与最终交付
 

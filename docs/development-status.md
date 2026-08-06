@@ -44,8 +44,9 @@ git status --short --branch
 
 ## 3. 当前阶段
 
-当前阶段：Phase 4——控制接口、录像和服务化。开发机软件路径状态为 `COMPLETE`；
-完整 Phase 4 仍为 `IN PROGRESS`，等待 RK3588、真实 RTSP、MediaMTX 和 systemd 实机验收。
+当前阶段：Phase 4——控制接口、录像和服务化，状态为 `COMPLETE`。开发机软件路径、
+RK3588 单路真实媒体、MediaMTX 录像和 systemd 生命周期均已验收；未经用户明确要求，
+暂不进入 Phase 5。
 
 当前开发机测试基线：
 
@@ -55,10 +56,10 @@ git status --short --branch
 编译器：GCC 16.1.1
 常规 CTest：26/26 PASS
 ASan/UBSan：26/26 PASS
-TSan（录像状态/HTTP/通道管理器/重载相关）：5/5 PASS
+TSan（适用的录像/HTTP/通道管理器/重载/故障恢复测试）：7/7 PASS
 GCC -fanalyzer：构建完成；9 条跨函数资源所有权/单字符缓冲区路径告警已人工复核
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
-RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
+RK3588 MPP/RGA：开发机不具备；已在下述目标板卡单独验收
 ```
 
 当前 RK3588 基线：
@@ -66,14 +67,16 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 ```text
 日期：2026-08-06
 平台：LubanCat aarch64，Debian 11，Linux 5.10.160
-源码：板卡无 .git；关键源文件校验值与本机 10e3432 一致
+源码：板卡无 .git；部署源码与本机功能提交 54f5e91 一致
 CMake：3.31.10
 FFmpeg-Rockchip：388741a，rkmpp/rkrga 检查 PASS
 MediaMTX：v1.20.0 linux arm64
 设备访问：MPP、RGA、DRM PASS
 环境检查：0 failures，0 warnings
 板卡完整 CTest：26/26 PASS
-Phase 0：PASS
+Phase 0、1、2、4：按当前单路和 5 分钟以上实机范围 PASS
+Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入板卡验收未执行
+限制：无音频；未执行 30 分钟长稳
 ```
 
 ## 4. 已完成增量
@@ -338,7 +341,7 @@ Phase 0：PASS
   比较模拟低空间，不写入填充文件；录像状态变为 low_space、健康状态 degraded，实时
   通道仍为 RUNNING。恢复 1 MiB 阈值后两个状态回到 ok。
 - 当前录像只有 H.264 视频轨，音频因 pipeline 的 `-an` 未进入发布流。真实证据保存在
-  板卡仓库外，Phase 4 仍等待故障恢复和 systemd 实机验收。
+  板卡仓库外；该录像增量完成时仍待故障恢复和 systemd 验收，后续增量已经补齐。
 
 ### 25e1a3f / d4a8b77：常驻工作进程零退出恢复修复
 
@@ -376,8 +379,8 @@ Phase 0：PASS
   重新建立并读取单路 H.264。
 - 原始证据位于板卡仓库外的 `phase3-fault-recovery.log`、
   `phase3-input-disconnect-fixed.log`、`phase3-input-recovery-fixed.log`、
-  `phase3-worker-crash-recovery.log` 和 `phase3-mediamtx-stop-recovery.log`。Phase 4 下一项为
-  systemd 非 root 服务生命周期验收。
+  `phase3-worker-crash-recovery.log` 和 `phase3-mediamtx-stop-recovery.log`。该增量之后执行的
+  systemd 非 root 服务生命周期验收见后续记录。
 
 ### 244f5b9：systemd 实机权限与 MediaMTX v1.20 兼容修复
 
@@ -405,7 +408,7 @@ Phase 0：PASS
 - 修复后完整常规 CTest 26/26、ASan/UBSan 26/26 和适用 TSan 7/7 PASS；下一步同步板卡
   并用真实 FFmpeg `/proc/PID/fd` 复核 9080 socket 不再被继承。
 
-### 本次增量：RK3588 systemd 生命周期验收
+### 94d7e47：RK3588 systemd 生命周期验收
 
 - CMake 正式安装后创建无登录 `rk-media-gateway` 账号，UID/GID 997，补充组为 video(44)
   与 render(107)。配置目录 0750、YAML 0640、root 环境文件 0600、录像目录 0750；两个
@@ -423,7 +426,32 @@ Phase 0：PASS
 - 故障恢复后 RTSP 为 H.264 1920×1080、平均 25fps，WebRTC 从 PC 自动重连，playback 返回
   新时间段且 `/var/lib/rk-media-gateway/recordings` 继续生成非空 MP4。原始证据保存在板卡
   仓库外的 `phase4-systemd-lifecycle.log` 和 `phase4-systemd-journal.log`。
-- 本增量尚未执行整机重启，开机自动启动仍为 PENDING；通过后再开始最终 30 分钟运行。
+- 该提交先记录停启和崩溃恢复；后续整机重启与缩短后的最终稳定窗口记录见下一增量。
+
+### Phase 4 最终重启与五分钟稳定验收
+
+- 整机重启前 boot ID 为 `761393ed-c372-439d-b7a8-afa94292ec7c`，重启后为
+  `7ecb42c7-e1e2-45b6-b0b6-f8cfd51ef9a6`。两个已启用服务在新系统启动约 4 秒后自动
+  进入 active；启动初期网络未就绪时通道按 1/2/4/8 秒退避，网络恢复后自动进入 RUNNING。
+- 重启后的最终连续稳定窗口为 6 分 12 秒，超过用户要求的 5 分钟：H.264
+  1920×1080@25，frame=9423，fps=25.19，speed=1.01，drop=0。gatewayd、MediaMTX 和
+  FFmpeg 各 1 个实例，父子关系正确，僵尸进程为 0。
+- 最终样本中 MediaMTX/gatewayd/FFmpeg 的 CPU 分别约 15.2%/0.1%/15.7%，RSS 分别约
+  55.1/2.2/20.8 MiB，温度约 41.6°C；这些是单点验收数据，不替代 Phase 5 性能报告。
+- 最小监听、配置权限、无凭据 URL、录像容量状态、RTSP 输出和 unit 静态验证均通过；
+  `systemd-analyze security` 对两个服务均给出 6.5 MEDIUM，作为后续加固基线而非零风险声明。
+- 重启后浏览器慢读曾触发 WebRTC 丢帧告警，录像器曾因绝对时间漂移重置一次；12:48 后
+  未再出现应用告警，录像和媒体输出持续正常。这与用户观察到约 1～2 秒延迟一致，尚未做
+  低延迟专项优化。
+- 用户明确取消本轮 30 分钟测试，因此 30 分钟长稳记录为 `SKIPPED`，没有伪造为 PASS；
+  Phase 4 按 5 分钟以上的修订验收范围完成。证据位于板卡仓库外的
+  `phase4-systemd-boot*.log` 和 `phase4-five-minute-final.log`。
+- 文档收尾后的最终顺序回归为常规 26/26、ASan/UBSan 26/26、适用 TSan 7/7 PASS。
+  ASan 首次在受限沙箱运行时只有 HTTP 测试因回环 bind 被拒绝而失败；允许回环后完整
+  复跑通过，错误证据为 `Operation not permitted`，未把该环境失败算成功能失败或通过。
+- 验收结束后优雅停止板卡两个服务，均保持 enabled、状态为 inactive 且 ExecMainStatus=0；
+  板卡 gatewayd/FFmpeg/MediaMTX 和僵尸进程计数均为 0。PC 临时摄像头 FFmpeg 与临时
+  MediaMTX 也已停止，录像、配置和板卡证据未删除。
 
 ## 5. 当前能力边界
 
@@ -443,19 +471,19 @@ Phase 0：PASS
 - RK3588 上的真实 PC 摄像头 RTSP、MPP/RGA 转码、RTSP/WebRTC 播放与 HTTP 控制。
 - MediaMTX 真实录像、回放、自动删除、低空间状态和停止后重新发布恢复。
 - 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的有限退避及自动恢复。
+- systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
 
-尚未具备：
+当前限制：
 
-- systemd 开机启动、正常停止、崩溃恢复和设备权限验收。
-- RK3588 30 分钟最终稳定运行和 Phase 5 完整性能数据。
+- 音频采集、编码、发布和录像；当前链路固定使用 `-an`。
+- RK3588 30 分钟长稳、双真实输入板卡验收和 Phase 5 完整性能数据。
+- WebRTC 低延迟专项调优；当前用户实测主观延迟约 1～2 秒。
 
 ## 6. 下一步队列
 
-按顺序执行：
-
-1. 安装并执行 systemd enable、开机启动、正常停止、设备权限和崩溃恢复验收。
-2. 在服务化链路上完成 30 分钟最终稳定运行、资源与残留进程检查。
-3. 依次执行最终常规、ASan/UBSan 和适用 TSan，更新 Phase 4 状态；暂不进入 Phase 5。
+Phase 4 已收口，暂无待执行项。后续仅在用户明确要求后进入 Phase 5；候选工作为长时间
+稳定性、双真实输入、延迟优化、音频方案和可复现性能矩阵，不能把本轮单点资源样本当作
+Phase 5 结论。
 
 ## 7. 文档职责
 

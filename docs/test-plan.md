@@ -1317,6 +1317,102 @@ CMake 临时安装：PASS；gatewayd 和 gateway-metrics 均存在
 长时间测试：本增量不执行
 ```
 
+### 8.2 RK3588 固定样本短时性能对比
+
+本节只执行短时吞吐微基准和 10 秒正式服务基线，不执行 30 分钟或更长稳定性测试。
+
+先从真实 PC 摄像头 RTSP 抓取一次固定输入，后续三条路径不得分别读取在线流：
+
+```bash
+export PHASE5_DIR=/home/cat/rk3588-acceptance/2026-08-06/phase5
+mkdir -p "$PHASE5_DIR"
+/usr/local/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
+  -rtsp_transport tcp -i rtsp://PC-ADDRESS:8554/source \
+  -t 15 -map 0:v:0 -an -c:v copy -y "$PHASE5_DIR/pc-camera-15s.mkv"
+/usr/local/bin/ffprobe -v error -select_streams v:0 \
+  -show_entries stream=codec_name,width,height,avg_frame_rate:format=duration,size \
+  "$PHASE5_DIR/pc-camera-15s.mkv"
+/usr/bin/ffmpeg -nostdin -v error -i "$PHASE5_DIR/pc-camera-15s.mkv" -an -f null -
+```
+
+预期：固定样本为 H.264 1920×1080@25、15 秒，完整软件解码无错误。记录 SHA-256，
+禁止在报告里写入带凭据 URL。
+
+三条路径分别使用 Debian FFmpeg 的 `h264 + libx264`、FFmpeg-Rockchip 的
+`h264_rkmpp + h264_rkmpp`，以及增加
+`scale_rkrga=w=1920:h=1080:format=nv12` 的硬件路径。共同约束：
+
+- 循环读取同一个固定样本，输出 H.264 1920×1080@25、6000 kbit/s 到 null muxer。
+- 进程启动 2 秒后运行 `gateway-metrics --duration-sec 10 --interval-ms 1000`。
+- 指标采集完成后只向该明确 FFmpeg PID 发送 SIGINT；退出码 255 是本测试的受控停止。
+- 保存 progress、stderr、CSV、开始/结束温度；stderr 有错误或 CSV 有 unavailable 即失败。
+- 另为每条路径实际生成 3 秒 Matroska，使用 ffprobe 和完整软件解码验证。
+
+三条微基准 FFmpeg argv 分别为：
+
+```bash
+/usr/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
+  -progress "$PHASE5_DIR/formal-software-progress.log" \
+  -stream_loop -1 -c:v h264 -i "$PHASE5_DIR/pc-camera-15s.mkv" -an \
+  -c:v libx264 -preset veryfast -tune zerolatency -profile:v high \
+  -pix_fmt yuv420p -b:v 6000k -r 25 -g 50 -f null -
+
+/usr/local/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
+  -progress "$PHASE5_DIR/formal-mpp-progress.log" -stats_period 1 \
+  -stream_loop -1 -hwaccel rkmpp -hwaccel_output_format drm_prime \
+  -c:v h264_rkmpp -i "$PHASE5_DIR/pc-camera-15s.mkv" -an \
+  -c:v h264_rkmpp -b:v 6000k -r 25 -f null -
+
+/usr/local/bin/ffmpeg -nostdin -hide_banner -loglevel warning \
+  -progress "$PHASE5_DIR/formal-mpp-rga-progress.log" -stats_period 1 \
+  -stream_loop -1 -hwaccel rkmpp -hwaccel_output_format drm_prime \
+  -c:v h264_rkmpp -i "$PHASE5_DIR/pc-camera-15s.mkv" \
+  -vf scale_rkrga=w=1920:h=1080:format=nv12 -an \
+  -c:v h264_rkmpp -b:v 6000k -r 25 -f null -
+```
+
+每条命令均单独后台启动并记录 `$!`，不能同时运行三条路径；否则 CPU、温度和带宽竞争会
+破坏比较。预热、采样和 SIGINT 步骤按上面的共同约束执行。
+
+正式服务采样必须用服务账号读取同 UID 进程：
+
+```bash
+sudo -u rk-media-gateway /usr/local/bin/gateway-metrics \
+  --target gateway=<gateway-pid> \
+  --target ffmpeg=<ffmpeg-pid> \
+  --target mediamtx=<mediamtx-pid> \
+  --duration-sec 10 --interval-ms 1000 > "$PHASE5_DIR/service-metrics.csv"
+```
+
+普通管理用户可能因 `/proc/<pid>/fd` 权限得到 unavailable；不能因此放宽服务权限或把
+unavailable CSV 写成通过。采样前后保存通道 HTTP 快照并确认 PID、重启数和丢帧数。
+
+实板记录：
+
+```text
+日期：2026-08-06
+提交：4ffa28d
+板卡构建/CTest：28/28 PASS
+固定输入：PC 摄像头 H.264 1920x1080@25，15.000 秒，14972221 bytes
+样本 SHA-256：ea17e825205b953a0ba81c29293b5ac08f2d8120d97109cf23e5640fde2f5052
+在线 RTSP 预跑：INVALID；软件宏块错误、MediaMTX 慢读丢帧、硬件路径重复帧
+软件正式短测：CPU 306.7%/330.0%，RSS 158.7/159.7 MiB，12.46fps，0.498x，drop=0
+MPP 正式短测：CPU 75.4%/83.0%，RSS 17.2/17.2 MiB，492.93fps，19.7x，drop=0
+MPP+RGA 正式短测：CPU 75.2%/85.0%，RSS 18.1/18.1 MiB，497.70fps，19.9x，drop=0
+实际输出：三个 3 秒 H.264 1080p25 文件均通过 ffprobe 和完整软件解码
+正式服务 10 秒：gateway/FFmpeg/MediaMTX CPU 平均 0.2%/18.6%/9.1%
+正式服务 RSS：2.14/18.72/45.10 MiB；FD：7/69/12，样本内不变
+正式服务媒体：25.35fps，1.02x，drop=0，restart=0，H.264 1080p25 输出 PASS
+温度：服务窗口约 42.5°C；无应用告警或僵尸进程
+清理：板卡服务 enabled/inactive，ExecMainStatus=0；板卡和 PC 临时进程为 0
+长时间测试：SKIPPED；按用户要求未执行
+结果：PASS（仅固定样本微基准与正式服务短基线）
+```
+
+原始证据位于板卡仓库外的
+`/home/cat/rk3588-acceptance/2026-08-06/phase5/`。微基准是最大吞吐测试，不代表
+在线网关会以 493fps 输出；正式在线输出仍为 25fps。端到端延迟和其他矩阵项保持 PENDING。
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

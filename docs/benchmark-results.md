@@ -19,30 +19,77 @@
 板卡：LubanCat aarch64
 系统：Debian 11
 内核：Linux 5.10.160
+CPU：8 核；调频策略 ondemand
+软件 FFmpeg：4.3.9-0+deb11u1，libx264
 FFmpeg-Rockchip：388741a
 MediaMTX：v1.20.0 linux arm64
-输入：PENDING
-提交：PENDING
-采样窗口：PENDING
-原始日志目录：PENDING
+输入：PC 真实摄像头 RTSP 抓取的 15 秒 H.264 1920x1080@25 固定样本
+样本：14972221 bytes；SHA-256 ea17e825205b953a0ba81c29293b5ac08f2d8120d97109cf23e5640fde2f5052
+提交：4ffa28d
+预热：2 秒
+采样窗口：10 秒，间隔 1 秒，共 10 个 CPU 有效样本
+原始日志目录：/home/cat/rk3588-acceptance/2026-08-06/phase5
 ```
 
 ## 3. 转码矩阵
 
 | 方案 | 输入 | 输出 | CPU 平均/峰值 | RSS 平均/峰值 | FPS/速度/丢帧 | 延迟 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 软件解码 + 软件编码 | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `PENDING` |
-| MPP 解码 + MPP 编码 | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `PENDING` |
-| MPP 解码 + RGA 缩放 + MPP 编码 | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `PENDING` |
+| 软件解码 + libx264 | H.264 1080p25 | H.264 1080p25 6M | 306.7% / 330.0% | 158.7 / 159.7 MiB | 12.46fps / 0.498x / 0 | 不适用 | `PASS`（短测） |
+| MPP 解码 + MPP 编码 | H.264 1080p25 | H.264 1080p25 6M | 75.4% / 83.0% | 17.2 / 17.2 MiB | 492.93fps / 19.7x / 0 | 不适用 | `PASS`（短测） |
+| MPP 解码 + RGA + MPP 编码 | H.264 1080p25 | H.264 1080p25 6M | 75.2% / 85.0% | 18.1 / 18.1 MiB | 497.70fps / 19.9x / 0 | 不适用 | `PASS`（短测） |
+
+这是无实时限速、输出到 null muxer 的最大吞吐微基准。三条路径都循环读取同一个固定文件，
+在相同 12 秒墙钟窗口运行；预热 2 秒后采样 10 秒，再以 SIGINT 正常结束 FFmpeg，因此
+退出码 255 是受控停止结果。CPU 平均值不含首个空基线样本。
+
+相对于软件路径，MPP 直通路径的 CPU 平均值低约 75.4%，RSS 平均值低约 89.2%，处理
+吞吐约为 39.6 倍；MPP+RGA 路径分别约为 75.5%、88.6% 和 39.9 倍。这些比值只适用于
+本次固定样本和命令。软件路径来自 Debian FFmpeg/libx264，硬件路径来自 FFmpeg-Rockchip，
+因此结果是完整实现路径对比，不是只隔离单一硬件单元的实验。
+
+当前 RGA 用于 1920×1080 到相同尺寸的 NV12 转换，不能据此推断实际缩放到其他分辨率时
+没有开销。在线 RTSP 预跑出现软件解码错误和 MediaMTX 慢读丢帧，三条预跑记录保留但判为
+无效；正式微基准使用经完整软件解码验证无错误的固定样本。
+
+### 3.1 实际输出验证
+
+每条路径另外生成 3 秒 Matroska，而不是只依赖 null 输出。三个文件都经 ffprobe 确认为
+H.264 1920×1080、25fps、3.000 秒，并由软件 FFmpeg 完整解码且无错误：
+
+| 路径 | 文件大小 | ffprobe/完整解码 |
+| --- | ---: | --- |
+| 软件 | 2,279,379 bytes | `PASS` |
+| MPP | 2,071,835 bytes | `PASS` |
+| MPP+RGA | 2,066,774 bytes | `PASS` |
+
+### 3.2 正式服务 10 秒基线
+
+此项使用真实 PC RTSP、gatewayd、RGA、板卡 MediaMTX、录像与 RTSP 输出，不能与上面的
+最大吞吐 fps 混合比较：
+
+| 进程 | CPU 平均/峰值 | RSS 平均/峰值 | FD 平均/峰值 |
+| --- | --- | --- | --- |
+| gatewayd | 0.2% / 1.0% | 2.14 / 2.14 MiB | 7 / 7 |
+| FFmpeg-Rockchip | 18.6% / 22.0% | 18.72 / 18.72 MiB | 69 / 69 |
+| MediaMTX | 9.1% / 16.0% | 45.10 / 47.20 MiB | 12 / 12 |
+
+开始和结束快照使用同一 FFmpeg PID；frame 从 1296 增至 1547，最终 25.35fps、1.02x、
+0 丢帧、0 重启。RTSP 输出实测为 H.264 1920×1080@25，温度在 10 秒内保持约 42.5°C，
+无应用告警或僵尸进程。
+
+服务进程属于专用 UID，普通 `cat` 用户因 `/proc/<pid>/fd` 权限得到 unavailable；有效 CSV
+由 `sudo -u rk-media-gateway gateway-metrics ...` 生成。这是预期权限边界，不是采样器或
+服务重启。验收结束后两个服务保持 enabled、优雅停止为 inactive/ExecMainStatus=0。
 
 ## 4. 稳定性与资源趋势
 
-长时间稳定性测试暂未执行。当前只允许记录短时基线；2 小时和 24 小时结果留待用户明确
+长时间稳定性测试暂未执行。当前只记录短时基线；2 小时和 24 小时结果留待用户明确
 安排后执行，不能把 Phase 4 的 6 分 12 秒功能验收写成长稳结果。
 
 | 窗口 | 进程重启 | RSS 变化 | FD 变化 | 丢帧 | 僵尸进程 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 短时基线 | PENDING | PENDING | PENDING | PENDING | PENDING | `PENDING` |
+| 正式服务 10 秒 | 0 | 三个进程在样本内稳定 | 三个进程在样本内稳定 | 0 | 0 | `PASS`（仅短测） |
 | 2 小时 | PENDING | PENDING | PENDING | PENDING | PENDING | `PENDING` |
 | 24 小时 | PENDING | PENDING | PENDING | PENDING | PENDING | `PENDING` |
 
@@ -51,3 +98,4 @@ MediaMTX：v1.20.0 linux arm64
 - 当前媒体链路没有音频，所有性能结果只覆盖视频。
 - 当前只有一个真实 PC 摄像头 RTSP 源，不能伪造双路真实输入吞吐量。
 - 用户已取消本轮 30 分钟长测；Phase 5 首轮只执行短时、可重复的对比基线。
+- 尚未测试其他分辨率、码率、通道数量和端到端延迟，Phase 5 仍为 `IN PROGRESS`。

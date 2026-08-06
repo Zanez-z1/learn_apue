@@ -884,6 +884,30 @@ TSan：HTTP/通道管理器/重载相关 4/4 PASS
 限制：使用假媒体进程；未连接真实 RTSP、MediaMTX 或 RK3588
 ```
 
+RK3588 真实摄像头验收记录：
+
+```text
+日期：2026-08-06
+输入：PC 真实摄像头，经 PC RTSP、RK3588 RKMpp/RGA 转码和板卡 MediaMTX
+查询：health、channels、单通道和 recording 均为 HTTP 200
+停止：202；状态进入 STOPPED；PID 628358 消失；RTSP 输出不可读
+重复停止：409
+启动：202；并发窗口内再次启动为 409；新工作进程 PID 676117
+重启：202；新工作进程 PID 677115
+恢复：启动和重启后 ffprobe 均得到 H.264 1920x1080@25；PC 跨主机读取 PASS
+错误接口：未知通道 404；GET 控制动作 405
+最终健康：HTTP 200，status=ok，running=1，failed=0
+敏感信息：验收日志不包含输入 URL
+结果：PASS
+```
+
+板卡仓库外证据：
+
+```text
+/home/cat/rk3588-acceptance/2026-08-06/phase4-http-control.log
+/home/cat/rk3588-acceptance/2026-08-06/phase1-camera-gateway.log
+```
+
 ### 7.3 MediaMTX 录像配置开发机验收
 
 执行：

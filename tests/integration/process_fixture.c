@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +43,22 @@ static int run_probe_fixture(int argc, char **argv)
     return 0;
 }
 
+static int claim_recovery_failure(void)
+{
+    const char *marker_path = getenv("GW_FIXTURE_RECOVERY_FILE");
+    int descriptor;
+
+    if (marker_path == NULL || marker_path[0] == '\0') {
+        return -1;
+    }
+    descriptor = open(marker_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (descriptor >= 0) {
+        close(descriptor);
+        return 1;
+    }
+    return errno == EEXIST ? 0 : -1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 2) {
@@ -50,6 +68,7 @@ int main(int argc, char **argv)
             .tv_sec = 0,
             .tv_nsec = 200000000L
         };
+        int recovery_attempt = -2;
         int index;
 
         if (is_probe_command(argc, argv)) {
@@ -59,6 +78,13 @@ int main(int argc, char **argv)
             if (strcmp(argv[index], "-i") == 0) {
                 input_url = argv[index + 1];
                 break;
+            }
+        }
+        if (input_url != NULL && strstr(input_url, "/recover-once") != NULL) {
+            recovery_attempt = claim_recovery_failure();
+            if (recovery_attempt < 0) {
+                fprintf(stderr, "fixture recovery marker is unavailable\n");
+                return 10;
             }
         }
         if (mode != NULL && strcmp(mode, "no-progress") == 0) {
@@ -82,7 +108,8 @@ int main(int argc, char **argv)
                "out_time_us=1680000\ndrop_frames=0\nspeed=1.0x\nprogress=end\n");
         fflush(stdout);
         if ((mode != NULL && strcmp(mode, "stall") == 0) ||
-            (input_url != NULL && strstr(input_url, "/hold") != NULL)) {
+            (input_url != NULL && strstr(input_url, "/hold") != NULL) ||
+            recovery_attempt == 0) {
             for (;;) {
                 pause();
             }
@@ -92,7 +119,9 @@ int main(int argc, char **argv)
             fprintf(stderr, "fixture input=%s\n", input_url);
         }
         return (mode != NULL && strcmp(mode, "fail") == 0) ||
-                       (input_url != NULL && strstr(input_url, "/worker-fail") != NULL)
+                       (input_url != NULL &&
+                        strstr(input_url, "/worker-fail") != NULL) ||
+                       recovery_attempt == 1
                    ? 9
                    : 0;
     }

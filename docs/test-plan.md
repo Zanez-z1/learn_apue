@@ -436,6 +436,8 @@ gateway_probe_retry_exhaustion_test
 - 读写锁保护的通道快照注册表。
 - 全部通道统一等待、停止和回收。
 - 单通道工作进程失败不会改变其他通道的状态或退出结果。
+- SIGHUP 候选配置校验和按通道差异化重载。
+- 开发机一次性输入断流后的独立退避和恢复。
 
 ### 6.1 开发机多通道测试
 
@@ -452,6 +454,7 @@ ctest --test-dir build --output-on-failure
 ```text
 gateway_channel_manager_tests
 gateway_reload_tests
+gateway_input_recovery_tests
 gateway_multi_channel_test
 ```
 
@@ -472,6 +475,15 @@ gateway_multi_channel_test
 - 第二次写入非法 YAML 配置后重载被拒绝，服务继续运行。
 - 最终 SIGTERM 停止全部新旧通道，日志中不出现明文密码。
 
+`gateway_input_recovery_tests` 使用双通道管理器和假媒体进程验证：
+
+- `cam02` 第一次工作进程已进入 `RUNNING` 后以退出码 9 模拟输入断开。
+- supervisor 记录 `worker_failure` 并退避 1 秒，重新执行探测和工作进程后恢复到
+  `RUNNING`，总重启数精确为 1。
+- 故障期间 `cam01` 保持 `RUNNING`，总重启数为 0，配置代次保持为 1。
+- 观察回调使用原子标志保存故障和恢复事件，测试结束统一停止、等待并回收两个通道。
+- 日志不得出现 `fixture-password`；临时恢复标记在测试结束后删除。
+
 `gateway_multi_channel_test` 从 CLI 加载双通道 YAML，验证 `gatewayd` 同时运行两个
 通道、两者均干净退出，并继续禁止明文密码日志。
 
@@ -483,7 +495,7 @@ cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=thread'
 cmake --build build-tsan --parallel
 ctest --test-dir build-tsan --output-on-failure \
-  -R 'gateway_(channel_manager|reload|multi_channel)_test'
+  -R 'gateway_(channel_manager|reload|input_recovery|multi_channel)_test'
 ```
 
 ### 6.2 当前增量验收记录
@@ -492,15 +504,17 @@ ctest --test-dir build-tsan --output-on-failure \
 日期：2026-08-06
 测试机器：x86_64 开发机
 测试方式：双通道假 ffprobe/FFmpeg 进程
-结果：PASS（常规与 ASan/UBSan 18/18；多通道/重载 TSan 3/3）
+结果：PASS（常规与 ASan/UBSan 19/19；多通道/重载/输入恢复 TSan 4/4）
 覆盖：并发启动、独立快照、健康/失败隔离、统一停止、线程回收、密码脱敏、
-      合法/非法 SIGHUP、按通道新增/禁用/重启、未变通道不中断
+      合法/非法 SIGHUP、按通道新增/禁用/重启、未变通道不中断、一次性输入断流、
+      退避重试、故障通道恢复且健康通道不中断
 限制：未连接真实 RTSP、MediaMTX 或 RK3588 MPP/RGA，不代表多路硬件性能通过
 ```
 
 尚未实现：
 
-- 输入源及 MediaMTX 故障解除后的真实恢复验证。
+- 真实 RTSP 输入停止、重新供流及向 MediaMTX 恢复发布的实机验证。
+- MediaMTX 发布端停止和恢复后的故障注入验证。
 - RK3588 多通道性能与稳定性验收。
 
 功能完成后，本节需要覆盖：

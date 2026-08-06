@@ -4,7 +4,7 @@
 `gatewayd` 使用 C17；FFmpeg-Rockchip 负责 MPP/RGA 媒体处理，MediaMTX 负责
 RTSP、WebRTC 和 HLS 分发。
 
-当前处于初始开发阶段，已经具备：
+当前处于开发阶段，已经具备：
 
 - YAML 配置读取、环境变量展开及边界校验。
 - RTSP URL 密码脱敏。

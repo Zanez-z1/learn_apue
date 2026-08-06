@@ -102,6 +102,18 @@ if(GATEWAY_BUILD_TESTS)
                 $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_reload_tests PROPERTIES TIMEOUT 15)
 
+    add_executable(gateway_input_recovery_tests
+        tests/integration/input_recovery_tests.c)
+    target_link_libraries(gateway_input_recovery_tests PRIVATE gateway_core)
+    target_compile_options(gateway_input_recovery_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_input_recovery_tests
+        COMMAND gateway_input_recovery_tests
+                $<TARGET_FILE:gateway_process_fixture>)
+    set_tests_properties(gateway_input_recovery_tests PROPERTIES
+        TIMEOUT 10
+        FAIL_REGULAR_EXPRESSION "fixture-password")
+
     add_executable(gateway_process_tests tests/integration/process_manager_tests.c)
     target_link_libraries(gateway_process_tests PRIVATE gateway_core)
     target_compile_options(gateway_process_tests PRIVATE

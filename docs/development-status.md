@@ -379,7 +379,7 @@ Phase 0：PASS
   `phase3-worker-crash-recovery.log` 和 `phase3-mediamtx-stop-recovery.log`。Phase 4 下一项为
   systemd 非 root 服务生命周期验收。
 
-### 本次增量：systemd 实机权限与 MediaMTX v1.20 兼容修复
+### 244f5b9：systemd 实机权限与 MediaMTX v1.20 兼容修复
 
 - 首次 systemd 启动没有伪装为通过：MediaMTX 因 v1.20 默认启用 MoQ、尝试在只读工作目录
   生成 `auto.crt` 而反复退出；gatewayd 服务账号虽属于 `video,render`，但
@@ -393,7 +393,7 @@ Phase 0：PASS
 - 下一步在开发机完成常规和 sanitizer 回归，重新安装单元与配置后再进行正式 systemd
   启停、异常恢复和开机启动验收。
 
-### 本次增量：HTTP 描述符跨 exec 泄漏修复
+### 54f5e91：HTTP 描述符跨 exec 泄漏修复
 
 - systemd 监听审计发现 FFmpeg 持有 gatewayd 的 9080 监听 socket。原因是 HTTP listener
   和 accept socket 创建时未原子设置 close-on-exec，后续通道重启的 posix_spawn 会继承
@@ -404,6 +404,26 @@ Phase 0：PASS
   工作进程若继承任何 socket 会直接失败。下一步完成三套回归并再次部署板卡。
 - 修复后完整常规 CTest 26/26、ASan/UBSan 26/26 和适用 TSan 7/7 PASS；下一步同步板卡
   并用真实 FFmpeg `/proc/PID/fd` 复核 9080 socket 不再被继承。
+
+### 本次增量：RK3588 systemd 生命周期验收
+
+- CMake 正式安装后创建无登录 `rk-media-gateway` 账号，UID/GID 997，补充组为 video(44)
+  与 render(107)。配置目录 0750、YAML 0640、root 环境文件 0600、录像目录 0750；两个
+  服务进程和 FFmpeg 均以 UID/GID 997 运行，没有改成 root。
+- 修复后的 MediaMTX 与 gatewayd 单元均 enabled/active。监听审计确认 gateway HTTP 9080、
+  RTSP 8554、playback 9996 只在回环地址；外部仅保留验收所需 WebRTC 8889/8189，未监听
+  RTMP、HLS、SRT 或 MoQ 端口。
+- 板卡重新构建后完整 CTest 26/26 PASS。真实 FFmpeg FD 包含自身 RTSP socket、MPP、RGA、
+  DMA heap 和 dmabuf，但不包含 gatewayd 的 9080 listener inode，close-on-exec 修复通过。
+- `systemctl stop` 使 gatewayd 以 ExecMainStatus=0 退出，旧 gateway/FFmpeg PID 均消失，
+  MediaMTX 保持运行；再次 start 后以新 PID 恢复真实硬件通道。
+- 精确 SIGKILL gatewayd 后，systemd 的 NRestarts 变为 1，旧 control group 工作进程被清理，
+  新 gatewayd/FFmpeg 回到 `RUNNING`。精确 SIGKILL MediaMTX 后其 NRestarts 也变为 1，
+  gatewayd 主 PID 不变，工作进程经历 broken pipe 和退避后重新发布。
+- 故障恢复后 RTSP 为 H.264 1920×1080、平均 25fps，WebRTC 从 PC 自动重连，playback 返回
+  新时间段且 `/var/lib/rk-media-gateway/recordings` 继续生成非空 MP4。原始证据保存在板卡
+  仓库外的 `phase4-systemd-lifecycle.log` 和 `phase4-systemd-journal.log`。
+- 本增量尚未执行整机重启，开机自动启动仍为 PENDING；通过后再开始最终 30 分钟运行。
 
 ## 5. 当前能力边界
 

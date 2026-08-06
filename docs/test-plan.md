@@ -1132,6 +1132,29 @@ RK3588 首次启动与修复前记录：
 结果：PENDING；必须安装已提交修复并重新执行真实服务生命周期，不能用临时单元代替
 ```
 
+RK3588 修复后 systemd 生命周期记录：
+
+```text
+日期：2026-08-06
+提交：244f5b9、54f5e91
+服务账号：UID/GID 997，非 root，补充组 video(44),render(107)
+板卡完整 CTest：26/26 PASS
+服务启用：mediamtx、rk-media-gateway 均 enabled/active
+最小监听：HTTP 9080、RTSP 8554、playback 9996 为回环；WebRTC 8889/8189 对测试网开放
+禁用协议：RTMP/HLS/SRT/MoQ 无监听
+硬件设备：MPP、RGA、DMA heap、DRM 白名单下 H.264 1080p 硬件链路 PASS
+描述符：真实 FFmpeg 不包含 gatewayd 9080 listener inode，PASS
+优雅停止：ExecMainStatus=0，旧 gatewayd/FFmpeg PID 消失，MediaMTX 保持运行，PASS
+重新启动：新 gatewayd PID 839668、FFmpeg PID 839784，RUNNING，PASS
+gatewayd SIGKILL：旧 control group 清理，NRestarts=1，新 PID 841273/841415，PASS
+MediaMTX SIGKILL：NRestarts=1，新 PID 843359；gatewayd PID 841273 不变，PASS
+重新发布：工作 PID 843273，H.264 1920x1080，avg 25fps，PASS
+WebRTC：PC 会话在 MediaMTX 恢复后重新建立并读取 cam01，PASS
+录像/回放：恢复后继续生成非空 MP4，playback 返回新时间段，PASS
+开机启动：PENDING
+原始日志：/home/cat/rk3588-acceptance/2026-08-06/phase4-systemd-*.log
+```
+
 ### 7.6 Phase 4 开发机最终审计
 
 三套动态测试必须依次执行，不要并行运行。每套都包含带严格时间阈值的进程监督测试，

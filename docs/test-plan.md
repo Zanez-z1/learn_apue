@@ -1608,6 +1608,55 @@ H.264 720p25 并可完整软件解码；无解码/编码错误、无残留进程
 非范围：多个真实 RTSP 输入、gatewayd/MediaMTX 完整在线负载
 ```
 
+### 8.6 画面时间戳延迟与 GOP 验证
+
+本测试必须使用画面内时间戳，分别报告“新连接首帧时间”和“稳定画面年龄”。不能用
+FFmpeg `speed`、主观播放感觉或单次截图代替。PC 生成 1280×720@25 H.264 测试图，
+在画面中央叠加 Unix 秒级时间戳并通过 RTSP 发布；板卡正式服务读取该源、RGA 缩放为
+1920×1080，再发布到板卡回环 MediaMTX。测试配置不含音频。
+
+测量前先确认两端时间同步并保留 5 次探测。每次记录 PC 发送前、板卡 `date +%s%N`、
+PC 接收后的纳秒值；用往返中点估算时钟偏差。若偏差不稳定或 NTP 未同步，延迟结果无效。
+不得为了 PC 采集而把板卡 MediaMTX 从回环地址暴露到局域网。
+
+独立连接首帧测试在板卡连续执行 5 次，每次新建 FFmpeg RTSP/TCP 连接、取得一帧后退出，
+保存连接开始/结束纳秒和截图。稳定延迟使用一个连续接收器，每 2 秒保存一帧，共 5 帧。
+逐张读取画面时间戳，以校正后的板卡采集时刻减去画面时间；整秒叠字引入 ±0.5 秒量化
+误差。还要检查服务日志中的实际 argv、MPP GOP 和不支持的 RTSP 传输错误。
+
+自动化回归验证：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(unit_tests|supervisor_tests|channel_manager_tests|reload_tests)'
+```
+
+`gateway_unit_tests` 必须验证输出参数顺序包含 `-r 25 -g 50`，并在 RTSP muxer 后包含
+输出侧 `-rtsp_transport tcp`。这与输入侧可配置的 RTSP transport 是两个不同作用域。
+
+实板记录：
+
+```text
+日期：2026-08-06
+输入：PC 生成测试图，H.264 1280x720@25，画面 Unix 秒级时间戳，无音频
+正式链路：RTSP 输入 -> gatewayd -> MPP/RGA 1920x1080 -> 板卡回环 MediaMTX
+时钟：两端 NTP synchronized；5 次探测 RTT 22~32ms，板卡落后约 214~218ms
+修复前独立首帧：平均 8.050s，范围 7.824~8.398s
+根因：MPP 默认 GOP 250 帧；输出侧未显式固定 RTSP/TCP
+修复：GOP=2*fps（25fps 时 50 帧），输出侧 RTSP/TCP
+修复后独立首帧：平均 2.038s，范围 1.900~2.286s，平均降低 74.7%
+连续接收画面年龄：约 1.25 +/- 0.5s（5 帧，整秒叠字量化误差）
+服务日志：gop=50；Unsupported Transport=0；最终通道状态 RUNNING
+开发机：常规 31/31、ASan/UBSan 31/31、适用 TSan 7/7 PASS
+板卡：Release 构建，相关 4/4 与完整 31/31 PASS
+清理：PC/板卡临时媒体进程为 0；服务 enabled/inactive；zombie=0
+证据：/home/cat/rk3588-acceptance/2026-08-06/phase5-latency/
+范围限制：未单独测量浏览器 WebRTC 缓冲，不宣称亚秒延迟
+长时间测试：本增量不执行
+结果：PASS
+```
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

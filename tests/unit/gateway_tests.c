@@ -148,6 +148,9 @@ static void test_pipeline(void)
     CHECK(gw_pipeline_render_redacted(&arguments, command, sizeof(command), &error) ==
           GW_OK);
     CHECK(strstr(command, "scale_rkrga=w=1280:h=720:format=nv12") != NULL);
+    CHECK(strstr(command, "'-r' '25' '-g' '50'") != NULL);
+    CHECK(strstr(command, "'-f' 'rtsp' '-rtsp_transport' 'tcp' "
+                          "'rtsp://127.0.0.1:8554/cam01'") != NULL);
     CHECK(strstr(command, "rtsp://alice:***@camera.local/live") != NULL);
     CHECK(strstr(command, "secret") == NULL);
     CHECK(strstr(command, "rtsp://127.0.0.1:8554/cam01") != NULL);

@@ -23,7 +23,8 @@ RTSP、WebRTC 和 HLS 分发。
 
 Phase 4 已完成开发机测试和 RK3588 单路实机验收：PC 摄像头可经 RTSP 输入、MPP/RGA
 硬件转码、MediaMTX 录像与回放，并由 systemd 以非 root 账号开机启动和异常恢复。
-当前媒体链路只有视频，不采集或输出音频；长时间压力、多路真实输入和性能对比留待后续阶段。
+Phase 5 已完成短时软硬件性能、分辨率、码率、重复固定样本容量和画面时间戳延迟测试。
+当前媒体链路只有视频，不采集或输出音频；长时间压力和多路真实输入留待后续验收。
 
 ## 构建
 
@@ -49,6 +50,10 @@ export CAM01_RTSP_URL='rtsp://user:password@camera.example/live'
 dry-run 输出会隐藏 URL 密码。输出内容只用于诊断；程序会将参数数组直接交给
 `posix_spawnp()`，不会交给 shell 执行。不带检查选项时，当前版本会并行启动
 所有启用的通道；需要使用包含 Rockchip MPP/RGA 支持的 FFmpeg。
+
+网关向 MediaMTX 发布时固定使用 RTSP/TCP，并将编码 GOP 设置为输出帧率的两倍，
+即默认约 2 秒一个关键帧，以限制新播放器等待关键帧的时间。实际播放延迟还会受到
+输入源、网络、MediaMTX 和播放器缓冲影响；这不是亚秒级 WebRTC 调优承诺。
 
 ## 配置重载
 

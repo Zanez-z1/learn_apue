@@ -163,8 +163,13 @@ gw_status gw_pipeline_build(const gw_channel_config *channel,
     if (status != GW_OK) {
         goto fail;
     }
+    status = append_integer_pair(arguments, "-g", channel->video.fps * 2, "", error);
+    if (status != GW_OK) {
+        goto fail;
+    }
     APPEND("-an");
     APPEND_PAIR("-f", "rtsp");
+    APPEND_PAIR("-rtsp_transport", "tcp");
 
     written = snprintf(output_url, sizeof(output_url), "%s%s%s",
                        mediamtx->publish_base_url,

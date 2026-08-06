@@ -217,11 +217,18 @@ ffmpeg \
   -vf "scale_rkrga=w=1280:h=720:format=nv12" \
   -c:v h264_rkmpp \
   -b:v 4000k \
+  -r 25 \
+  -g 50 \
+  -an \
   -f rtsp \
+  -rtsp_transport tcp \
   rtsp://127.0.0.1:8554/cam01
 ```
 
 是否实现完整零拷贝不能仅根据命令推断，需要结合 FFmpeg 日志、CPU 占用和实际数据格式验证后再写入项目说明。
+输出端显式使用 RTSP/TCP，避免 FFmpeg 先尝试不受发布端支持的传输方式。GOP 固定为
+`2 * fps`，将新连接等待关键帧的上界控制在约 2 秒；这是启动延迟与压缩效率之间的
+工程折中，不代表播放器端的端到端延迟一定低于 2 秒。
 
 ### 6.3 MediaMTX
 

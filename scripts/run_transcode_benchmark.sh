@@ -180,7 +180,7 @@ fi
 mkdir -p "$output_dir" || fail "cannot create output directory: $output_dir"
 prefix=$output_dir/$mode-${output_width}x${output_height}
 for suffix in command.txt meta.log metrics.csv progress.log stderr.log stdout.log \
-    output.mkv output-probe.txt output-decode.log; do
+    metrics-summary.csv output.mkv output-probe.txt output-decode.log; do
     [[ ! -e $prefix-$suffix ]] || fail "result already exists: $prefix-$suffix"
 done
 
@@ -247,7 +247,8 @@ if ! kill -0 "$child_pid" 2>/dev/null; then
 fi
 
 "$metrics_binary" --target "ffmpeg=$child_pid" --duration-sec "$sample_sec" \
-    --interval-ms "$interval_ms" >"$prefix-metrics.csv"
+    --interval-ms "$interval_ms" \
+    --summary-output "$prefix-metrics-summary.csv" >"$prefix-metrics.csv"
 metrics_status=$?
 kill -INT "$child_pid" 2>/dev/null || true
 wait "$child_pid"

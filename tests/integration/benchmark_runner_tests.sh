@@ -29,6 +29,19 @@ EOF
 
 cat >"$test_dir/fake-metrics" <<'EOF'
 #!/usr/bin/env bash
+set -eu
+summary=''
+while (($# > 0)); do
+    if [[ $1 == --summary-output && $# -ge 2 ]]; then
+        summary=$2
+        shift 2
+    else
+        shift
+    fi
+done
+[[ -n $summary ]]
+printf 'target,pid,available_samples,unavailable_samples,cpu_samples,cpu_avg_percent,cpu_peak_percent,rss_avg_kib,rss_peak_kib,fd_min,fd_max\n' >"$summary"
+printf 'ffmpeg,123,2,0,1,10.00,10.00,1000.00,1000,4,4\n' >>"$summary"
 printf 'elapsed_ms,target,pid,status,cpu_percent,rss_kib,fd_count\n'
 printf '0,ffmpeg,123,ok,,1000,4\n'
 printf '1000,ffmpeg,123,ok,10.00,1000,4\n'
@@ -55,6 +68,8 @@ fi
 
 test -s "$output/software-1280x720-metrics.csv"
 test -s "$output/mpp-rga-1280x720-metrics.csv"
+test -s "$output/software-1280x720-metrics-summary.csv"
+test -s "$output/mpp-rga-1280x720-metrics-summary.csv"
 test -s "$output/software-1280x720-output.mkv"
 test -s "$output/mpp-rga-1280x720-output.mkv"
 grep -q 'scale=1280:720:flags=bicubic,format=yuv420p' "$test_dir/ffmpeg-argv.log"

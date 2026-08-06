@@ -523,6 +523,19 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 验收后板卡 gatewayd/FFmpeg/MediaMTX 和僵尸进程均为 0；两个 systemd 服务
   保持 enabled/inactive，没有因微基准改变服务状态。
 
+### Phase 5 增量：C17 指标汇总
+
+- `gateway-metrics --summary-output FILE` 在采样的同一进程内为每个目标统计
+  available/unavailable 样本、CPU 样本数与平均/峰值、RSS 平均/峰值及
+  FD 最小/最大值，避免后续码率矩阵人工拷贝和计算 CSV。
+- 汇总路径使用 C17 `fopen(..., "wx")` 排他创建；文件已存在时在采样前失败，
+  不覆盖旧证据。目标不可用时仍在汇总中保留计数，且 CLI 继续非零退出。
+- 固定样本运行器现在自动产生 `metrics-summary.csv` 并将其纳入防覆盖检查。
+  开发机集成测试覆盖真实 self 采样、汇总字段边界、防覆盖和运行器传参。
+- 完整常规 CTest 30/30、ASan/UBSan 30/30、适用 TSan 7/7 及 CMake 临时安装
+  均 PASS。Bash 语法、`git diff --check`、无 `eval`、无 `system()`/`popen()` 及
+  无显式 `(void)` 弃值调用扫描通过。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -542,7 +555,7 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - MediaMTX 真实录像、回放、自动删除、低空间状态和停止后重新发布恢复。
 - 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的有限退避及自动恢复。
 - systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
-- 可安装的 C17 进程指标采样工具及 CSV 输出。
+- 可安装的 C17 进程指标采样工具及原始/汇总 CSV 输出。
 
 当前限制：
 

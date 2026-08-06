@@ -6,6 +6,9 @@
 ## 1. 指标口径
 
 - `gateway-metrics` 从 Linux `/proc` 读取目标进程的 CPU tick、RSS 和打开文件描述符数。
+- `--summary-output` 由采样进程直接生成汇总 CSV，CPU 平均值只统计具有前一
+  tick 基线的样本；RSS 平均值统计全部可用样本。汇总保留 available/unavailable
+  数量和 FD 最小/最大值，且不覆盖已有证据。
 - CPU 百分比按相邻样本计算，100% 表示占满一个逻辑 CPU，允许多线程进程超过 100%。
 - RSS 和文件描述符是每个采样时刻的进程值，不包含该进程未拥有的外部服务资源。
 - FPS、处理速度、丢帧和重启次数取自 `GET /v1/channels/{id}` 的开始/结束快照。

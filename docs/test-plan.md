@@ -1273,7 +1273,7 @@ TSan 7/7 PASS。ASan 首次在受限沙箱中为 25/26，唯一失败项因回�
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure \
-  -R 'gateway_(process_metrics|metrics_cli)_test'
+  -R 'gateway_(process_metrics|metrics_cli|metrics_summary)_test'
 ```
 
 `gateway_process_metrics_tests` 验证：
@@ -1291,9 +1291,13 @@ ctest --test-dir build --output-on-failure \
   --target gateway=<gatewayd-pid> \
   --target ffmpeg=<ffmpeg-pid> \
   --target mediamtx=<mediamtx-pid> \
-  --duration-sec 5 \
+  --duration-sec 5 --summary-output /tmp/gateway-metrics-summary.csv \
   --interval-ms 1000 > /tmp/gateway-metrics.csv
 ```
+
+`gateway_metrics_summary_test` 验证汇总中的可用样本、CPU 样本、CPU 平均/峰值、
+RSS 平均/峰值和 FD 范围均有效，并验证第二次使用同一
+`--summary-output` 会在采样前失败。汇总文件只包标签和进程指标，不接收 URL。
 
 预期：首样本 `cpu_percent` 为空，后续样本为相邻 tick 的 CPU 百分比；100% 表示一个
 逻辑 CPU。采样期间任何 PID 消失时相应行必须为 `unavailable` 且程序非零退出。CSV 不
@@ -1314,6 +1318,21 @@ ASan/UBSan：28/28 PASS（LeakSanitizer 因 ptrace 环境关闭）
 CMake 临时安装：PASS；gatewayd 和 gateway-metrics 均存在
 安全检查：git diff、显式 (void) 调用、system()/popen() 扫描 PASS
 实板性能数据：PENDING
+长时间测试：本增量不执行
+```
+
+汇总输出增量记录：
+
+```text
+日期：2026-08-06
+相关测试：gateway_metrics_summary_test 与 gateway_benchmark_runner_tests 2/2 PASS
+完整常规 CTest：30/30 PASS
+完整 ASan/UBSan：30/30 PASS（LeakSanitizer 因 ptrace 环境关闭）
+适用 TSan：7/7 PASS
+CMake 临时安装树：PASS
+失效目标：汇总保留 unavailable 计数，CLI 退出码 2
+防覆盖：PASS；已有汇总路径在采样前失败
+安全扫描：Bash 语法、git diff、无 eval/system()/popen()、无显式 (void) 弃值调用 PASS
 长时间测试：本增量不执行
 ```
 
@@ -1431,6 +1450,7 @@ MPP 硬件。它验证：
 - `mpp` 模式输出尺寸与输入不同时拒绝运行。
 - 同模式、分辨率的任何结果文件已存在时拒绝覆盖。
 - 指标 CSV、验证输出均生成，运行器源码不包含 `eval`。
+- 指标汇总 CSV 由 `gateway-metrics` 直接生成，运行器将它纳入防覆盖列表。
 
 安装树检查：
 

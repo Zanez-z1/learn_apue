@@ -141,10 +141,13 @@ gateway-metrics \
   --target ffmpeg=1235 \
   --target mediamtx=1236 \
   --duration-sec 5 \
-  --interval-ms 1000 > metrics.csv
+  --interval-ms 1000 \
+  --summary-output metrics-summary.csv > metrics.csv
 ```
 
-PID 需替换为当前实际进程。详细口径、FPS/丢帧配套采集方式和性能结果见
+PID 需替换为当前实际进程。样本 CSV 写入标准输出，`--summary-output`
+另生成 CPU、RSS、FD 和样本可用性汇总；已有汇总文件不会被覆盖。详细口径、
+FPS/丢帧配套采集方式和性能结果见
 [docs/benchmark-results.md](docs/benchmark-results.md)。
 
 ## 固定样本转码测试
@@ -160,5 +163,6 @@ PID 需替换为当前实际进程。详细口径、FPS/丢帧配套采集方式
 ```
 
 `--mode` 可为 `software`、`mpp` 或 `mpp-rga`。脚本默认预热 2 秒、采样 10 秒，
-并实际生成 3 秒输出做 ffprobe 和完整软件解码校验。它只接受本地固定文件，
+保存原始指标与汇总，并实际生成 3 秒输出做 ffprobe 和完整软件解码校验。
+它只接受本地固定文件，
 且不覆盖已有结果。开发者验收步骤见 [docs/test-plan.md](docs/test-plan.md)。

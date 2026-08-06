@@ -137,6 +137,12 @@ if(GATEWAY_BUILD_TESTS)
             "elapsed_ms,target,pid,status,cpu_percent,rss_kib,fd_count"
         FAIL_REGULAR_EXPRESSION "unavailable")
 
+    add_test(NAME gateway_metrics_summary_test
+        COMMAND ${BASH_PROGRAM}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/metrics_summary_tests.sh
+            $<TARGET_FILE:gateway-metrics>)
+    set_tests_properties(gateway_metrics_summary_test PROPERTIES TIMEOUT 5)
+
     add_executable(gateway_benchmark_ffmpeg_fixture
         tests/integration/benchmark_ffmpeg_fixture.c)
     target_compile_options(gateway_benchmark_ffmpeg_fixture PRIVATE

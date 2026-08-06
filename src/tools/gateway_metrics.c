@@ -20,6 +20,16 @@ typedef struct {
     pid_t pid;
     bool previous_valid;
     uint64_t previous_ticks;
+    size_t available_samples;
+    size_t unavailable_samples;
+    size_t cpu_samples;
+    double cpu_sum;
+    double cpu_peak;
+    double rss_sum_kib;
+    long rss_peak_kib;
+    size_t fd_min;
+    size_t fd_max;
+    bool resource_stats_valid;
 } metrics_target;
 
 typedef struct {
@@ -27,14 +37,17 @@ typedef struct {
     size_t target_count;
     long duration_sec;
     long interval_ms;
+    const char *summary_path;
 } metrics_options;
 
 static void print_usage(FILE *stream)
 {
     fprintf(stream,
             "Usage: gateway-metrics --target LABEL=PID [--target LABEL=PID ...] "
-            "[--duration-sec N] [--interval-ms N]\n"
-            "       PID may be 'self' for a tool self-test. CSV is written to stdout.\n");
+            "[--duration-sec N] [--interval-ms N] [--summary-output FILE]\n"
+            "       PID may be 'self' for a tool self-test. Samples are written to "
+            "stdout.\n"
+            "       A summary output file is created exclusively and never overwritten.\n");
 }
 
 static int parse_long(const char *text, long minimum, long maximum, long *value)
@@ -143,6 +156,14 @@ static int parse_options(int argc, char **argv, metrics_options *options)
             }
             continue;
         }
+        if (strcmp(argv[index], "--summary-output") == 0 && index + 1 < argc) {
+            index++;
+            if (options->summary_path != NULL || argv[index][0] == '\0') {
+                return -1;
+            }
+            options->summary_path = argv[index];
+            continue;
+        }
         return -1;
     }
 
@@ -190,7 +211,27 @@ static bool sample_target(metrics_target *target, int64_t elapsed_ms,
         printf("%" PRId64 ",%s,%ld,unavailable,,,\n",
                elapsed_ms, target->label, (long)target->pid);
         target->previous_valid = false;
+        target->unavailable_samples++;
         return false;
+    }
+
+    target->available_samples++;
+    target->rss_sum_kib += (double)metrics.rss_kib;
+    if (!target->resource_stats_valid) {
+        target->rss_peak_kib = metrics.rss_kib;
+        target->fd_min = metrics.fd_count;
+        target->fd_max = metrics.fd_count;
+        target->resource_stats_valid = true;
+    } else {
+        if (metrics.rss_kib > target->rss_peak_kib) {
+            target->rss_peak_kib = metrics.rss_kib;
+        }
+        if (metrics.fd_count < target->fd_min) {
+            target->fd_min = metrics.fd_count;
+        }
+        if (metrics.fd_count > target->fd_max) {
+            target->fd_max = metrics.fd_count;
+        }
     }
 
     if (target->previous_valid && metrics.cpu_ticks >= target->previous_ticks &&
@@ -199,6 +240,11 @@ static bool sample_target(metrics_target *target, int64_t elapsed_ms,
 
         cpu_percent = (double)delta_ticks * 100000.0 /
                       ((double)ticks_per_second * (double)sample_delta_ms);
+        target->cpu_samples++;
+        target->cpu_sum += cpu_percent;
+        if (target->cpu_samples == 1U || cpu_percent > target->cpu_peak) {
+            target->cpu_peak = cpu_percent;
+        }
         printf("%" PRId64 ",%s,%ld,ok,%.2f,%ld,%zu\n",
                elapsed_ms, target->label, (long)target->pid, cpu_percent,
                metrics.rss_kib, metrics.fd_count);
@@ -212,7 +258,49 @@ static bool sample_target(metrics_target *target, int64_t elapsed_ms,
     return true;
 }
 
-static int collect_metrics(metrics_options *options)
+static int write_summaries(FILE *stream, const metrics_options *options)
+{
+    size_t index;
+
+    if (stream == NULL) {
+        return 0;
+    }
+    if (fprintf(stream,
+                "target,pid,available_samples,unavailable_samples,cpu_samples,"
+                "cpu_avg_percent,cpu_peak_percent,rss_avg_kib,rss_peak_kib,"
+                "fd_min,fd_max\n") < 0) {
+        return -1;
+    }
+    for (index = 0U; index < options->target_count; index++) {
+        const metrics_target *target = &options->targets[index];
+
+        if (fprintf(stream, "%s,%ld,%zu,%zu,%zu,", target->label,
+                    (long)target->pid, target->available_samples,
+                    target->unavailable_samples, target->cpu_samples) < 0) {
+            return -1;
+        }
+        if (target->cpu_samples > 0U &&
+            fprintf(stream, "%.2f,%.2f,", target->cpu_sum / (double)target->cpu_samples,
+                    target->cpu_peak) < 0) {
+            return -1;
+        }
+        if (target->cpu_samples == 0U && fprintf(stream, ",,") < 0) {
+            return -1;
+        }
+        if (target->resource_stats_valid) {
+            if (fprintf(stream, "%.2f,%ld,%zu,%zu\n",
+                        target->rss_sum_kib / (double)target->available_samples,
+                        target->rss_peak_kib, target->fd_min, target->fd_max) < 0) {
+                return -1;
+            }
+        } else if (fprintf(stream, ",,,,\n") < 0) {
+            return -1;
+        }
+    }
+    return fflush(stream);
+}
+
+static int collect_metrics(metrics_options *options, FILE *summary_stream)
 {
     struct timespec start;
     struct timespec now;
@@ -255,6 +343,9 @@ static int collect_metrics(metrics_options *options)
             return -1;
         }
     }
+    if (write_summaries(summary_stream, options) != 0) {
+        return -1;
+    }
     return all_available ? 0 : 2;
 }
 
@@ -262,6 +353,7 @@ int main(int argc, char **argv)
 {
     metrics_options options;
     int parse_result = parse_options(argc, argv, &options);
+    FILE *summary_stream = NULL;
     int result;
 
     if (parse_result > 0) {
@@ -272,7 +364,25 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    result = collect_metrics(&options);
+    if (options.summary_path != NULL) {
+        summary_stream = fopen(options.summary_path, "wx");
+        if (summary_stream == NULL) {
+            fprintf(stderr, "gateway-metrics: cannot create summary: %s\n",
+                    strerror(errno));
+            return EXIT_FAILURE;
+        }
+    }
+
+    result = collect_metrics(&options, summary_stream);
+    if (summary_stream != NULL) {
+        int saved_errno = errno;
+
+        if (fclose(summary_stream) != 0 && result >= 0) {
+            result = -1;
+        } else if (result < 0) {
+            errno = saved_errno;
+        }
+    }
     if (result < 0) {
         fprintf(stderr, "gateway-metrics: sampling failed: %s\n", strerror(errno));
         return EXIT_FAILURE;

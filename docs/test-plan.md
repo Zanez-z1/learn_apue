@@ -1081,6 +1081,10 @@ cmake --install build --prefix /tmp/rk-media-gateway-install-test
 - gatewayd 使用非 root 用户、受保护 EnvironmentFile、SIGHUP ExecReload、
   `Restart=on-failure`、SIGTERM、control-group 清理和 20 秒停止上限。
 - gatewayd 与 MediaMTX 都启用 NoNewPrivileges、只读系统目录和录像目录写白名单。
+- gatewayd 在 ProtectClock 封闭设备策略下仅放行 RK3588 的 MPP、RGA、DMA heap 和 DRM
+  节点；不得通过改成 root 或关闭全部设备隔离来绕过硬件权限。
+- MediaMTX 生成配置显式关闭 RTMP、HLS、SRT 和 MoQ，RTSP 仅使用 TCP 并监听回环地址；
+  防止 v1.20 默认 MoQ 自动证书写入与只读文件系统冲突。
 - MediaMTX 独立服务运行，gatewayd 仅通过 `Wants`/`After` 表达启动顺序。
 - tmpfiles 创建录像目录，部署文件不包含测试密码或内嵌 Password 字段。
 - CMake 临时安装树包含二进制、两个服务单元、tmpfiles、环境示例、YAML 和部署文档。
@@ -1107,6 +1111,23 @@ CMake 临时安装：PASS
 systemd-analyze verify：单元被解析；因 /usr/local/bin/gatewayd 和 mediamtx 未安装而退出 1
 结果：PASS（部署文件静态契约与进程优雅退出）；PENDING（真实 systemd 生命周期）
 限制：未执行 enable、开机启动、异常自动恢复、真实 MediaMTX 停止或板卡设备权限验收
+```
+
+RK3588 首次启动与修复前记录：
+
+```text
+日期：2026-08-06
+专用账号：rk-media-gateway，非 root，SupplementaryGroups=video,render
+安装与配置权限：PASS；YAML 0640，环境文件 root:root 0600，录像目录服务账号 0750
+首次 MediaMTX：FAIL；v1.20 默认 MoQ 写 auto.crt，被 ProtectSystem=strict 拒绝
+首次 RKMPP：FAIL；ProtectClock 的封闭设备策略未放行 MPP/RGA/DMA heap/DRM
+直接服务账号硬件测试：PASS；证明 Unix 组权限正确
+临时 systemd + ProtectClock：可重复 FAIL
+临时 systemd + ProtectClock + 精确 DeviceAllow：3 秒硬件解码/RGA/编码 PASS
+修复后开发机常规 CTest：26/26 PASS
+修复后 ASan/UBSan：首次 25/26（输入恢复观察窗口抖动），单项复跑 PASS，完整复跑 26/26 PASS
+修复后适用 TSan：7/7 PASS
+结果：PENDING；必须安装已提交修复并重新执行真实服务生命周期，不能用临时单元代替
 ```
 
 ### 7.6 Phase 4 开发机最终审计

@@ -379,6 +379,20 @@ Phase 0：PASS
   `phase3-worker-crash-recovery.log` 和 `phase3-mediamtx-stop-recovery.log`。Phase 4 下一项为
   systemd 非 root 服务生命周期验收。
 
+### 本次增量：systemd 实机权限与 MediaMTX v1.20 兼容修复
+
+- 首次 systemd 启动没有伪装为通过：MediaMTX 因 v1.20 默认启用 MoQ、尝试在只读工作目录
+  生成 `auto.crt` 而反复退出；gatewayd 服务账号虽属于 `video,render`，但
+  `ProtectClock=yes` 间接启用封闭设备策略，RKMPP 无法取得 allocator。
+- MediaMTX 生成器现显式关闭未使用的 RTMP、HLS、SRT 和 MoQ，仅保留 TCP RTSP、WebRTC
+  与按需 playback；RTSP 发布监听限制到回环地址。测试固定这些字段，避免后续 MediaMTX
+  版本新增协议默认开启。
+- gatewayd 单元保留 `ProtectClock=yes`，并以 `DeviceAllow` 最小放行 MPP、RGA、板卡现有
+  DMA heap、DRM card0 与 renderD128。临时 systemd 单元已证明单独启用 ProtectClock 会
+  复现失败，加入精确设备白名单后同一非 root 账号完成 3 秒硬件解码、RGA 与编码。
+- 下一步在开发机完成常规和 sanitizer 回归，重新安装单元与配置后再进行正式 systemd
+  启停、异常恢复和开机启动验收。
+
 ## 5. 当前能力边界
 
 已经具备：

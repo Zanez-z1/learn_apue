@@ -56,6 +56,13 @@ static void test_render_recording_config(void)
 
     CHECK(gw_mediamtx_render_config(&config, output, sizeof(output), &error) ==
           GW_OK);
+    CHECK(strstr(output, "rtspTransports: [tcp]") != NULL);
+    CHECK(strstr(output, "rtspAddress: '127.0.0.1:8554'") != NULL);
+    CHECK(strstr(output, "rtmp: false") != NULL);
+    CHECK(strstr(output, "hls: false") != NULL);
+    CHECK(strstr(output, "webrtc: true") != NULL);
+    CHECK(strstr(output, "srt: false") != NULL);
+    CHECK(strstr(output, "moq: false") != NULL);
     CHECK(strstr(output, "playback: true") != NULL);
     CHECK(strstr(output, "playbackAddress: '127.0.0.1:9996'") != NULL);
     CHECK(strstr(output, "  front-door:\n    record: true") != NULL);

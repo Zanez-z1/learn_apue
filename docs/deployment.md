@@ -23,7 +23,9 @@ sudo systemd-tmpfiles --create /usr/local/lib/tmpfiles.d/rk-media-gateway.conf
 ```
 
 如果发行版使用不同的设备访问组，按 `/dev/mpp_service`、`/dev/rga` 和 `/dev/dri/*`
-的实际属组调整补充组，不能为方便而把服务改成 root。
+的实际属组调整补充组，不能为方便而把服务改成 root。服务单元还在 `ProtectClock` 带来的
+封闭设备策略中显式放行 RK3588 使用的 MPP、RGA、DMA heap、DRM card0 和 renderD128；
+如果板卡节点名称不同，应按实际节点修改 `DeviceAllow`，不能直接关闭全部设备隔离。
 
 ## 2. 安装配置与凭据
 
@@ -97,5 +99,7 @@ systemd 向 gatewayd 发送 SIGTERM。gatewayd 先通知并回收每个 supervis
 - `ProtectSystem=strict`，只有 `/var/lib/rk-media-gateway` 可写。
 - HTTP、playback 和示例 RTSP 都只监听回环地址；跨主机访问必须另加认证、TLS、防火墙
   或受控反向代理。
+- 生成的 MediaMTX 配置只启用 TCP RTSP、WebRTC 和按需 playback；未使用的 RTMP、HLS、
+  SRT 和 MoQ 显式关闭，避免版本新增协议默认开启或 MoQ 自动证书写入与只读服务冲突。
 - 环境文件建议 0600，YAML 建议 0640；真实 URL 密码不得进入仓库或测试记录。
 - 设备节点和媒体软件版本依赖板卡系统，服务文件不能证明 MPP/RGA 或真实录像已通过。

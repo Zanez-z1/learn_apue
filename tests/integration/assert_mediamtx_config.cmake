@@ -16,6 +16,13 @@ if(NOT gateway_result EQUAL 0)
 endif()
 
 foreach(required IN ITEMS
+        "rtspTransports: [tcp]"
+        "rtspAddress: '127.0.0.1:8554'"
+        "rtmp: false"
+        "hls: false"
+        "webrtc: true"
+        "srt: false"
+        "moq: false"
         "playback: true"
         "playbackAddress: '127.0.0.1:9996'"
         "record: true"

@@ -17,6 +17,11 @@ foreach(required IN ITEMS
         "KillMode=control-group"
         "NoNewPrivileges=yes"
         "ProtectSystem=strict"
+        "ProtectClock=yes"
+        "DeviceAllow=/dev/mpp_service rw"
+        "DeviceAllow=/dev/rga rw"
+        "DeviceAllow=/dev/dma_heap/system rw"
+        "DeviceAllow=/dev/dri/renderD128 rw"
         "ReadWritePaths=/var/lib/rk-media-gateway")
     string(FIND "${gateway_unit}" "${required}" position)
     if(position EQUAL -1)

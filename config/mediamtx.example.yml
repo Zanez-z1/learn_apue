@@ -1,7 +1,15 @@
 # MediaMTX v1.20-compatible recording example for gateway.example.yaml.
 # Keep playback on loopback unless an authenticated reverse proxy is configured.
 logLevel: info
+rtsp: true
+rtspTransports: [tcp]
 rtspAddress: 127.0.0.1:8554
+rtmp: false
+hls: false
+webrtc: true
+webrtcAddress: :8889
+srt: false
+moq: false
 playback: true
 playbackAddress: 127.0.0.1:9996
 

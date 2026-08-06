@@ -1542,6 +1542,54 @@ MPP+RGA 6000k：CPU 158.1%/164.0%，RSS 18.0/18.2 MiB，1011.65fps/40.5x，drop=
 结果：PASS（仅码率短时矩阵）
 ```
 
+### 8.5 重复固定样本多通道容量测试
+
+开发机行为测试：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure -R gateway_capacity_runner_tests
+```
+
+测试夹具要求四个 runner 全部到达就绪屏障才产生汇总，因此可证明运行器
+确实并发启动。测试还必须验证：
+
+- 四路独立目录和合计 CSV 数值正确。
+- 已存在输出目录时拒绝复用，不覆盖部分证据。
+- 超过 8 路时拒绝执行，脚本不使用 `eval`。
+
+开发机增量记录：
+
+```text
+日期：2026-08-06
+容量运行器行为测试：PASS
+完整常规 CTest：31/31 PASS
+完整 ASan/UBSan：31/31 PASS（LeakSanitizer 因 ptrace 环境关闭）
+适用 TSan：7/7 PASS
+CMake 临时安装：PASS；run_capacity_benchmark.sh 可执行
+安全扫描：Bash 语法、无 eval/system()/popen()、git diff PASS
+长时间测试：本增量不执行
+```
+
+RK3588 短时矩阵：
+
+```bash
+sample=/home/cat/rk3588-acceptance/2026-08-06/phase5/pc-camera-15s.mkv
+runner=/usr/local/share/rk-media-gateway/scripts/run_capacity_benchmark.sh
+
+for channels in 1 2 4; do
+  "$runner" --channels "$channels" --mode mpp-rga --input "$sample" \
+    --output-dir "/home/cat/rk3588-acceptance/2026-08-06/phase5-capacity-$channels" \
+    --output-width 1280 --output-height 720 --bitrate-kbps 3000
+done
+```
+
+通过标准：每路均为 11 available/0 unavailable、drop=0，每份 3 秒输出均为
+H.264 720p25 并可完整软件解码；无解码/编码错误、无残留进程。
+这是同一 PC 摄像头固定文件的重复输入，只验证板卡资源容量；不得把结果
+标记为多路真实 RTSP 摄像头验收。
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

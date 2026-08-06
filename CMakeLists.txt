@@ -59,6 +59,7 @@ install(FILES deploy/systemd/gateway.env.example
         DESTINATION share/rk-media-gateway)
 install(FILES docs/deployment.md DESTINATION share/doc/rk-media-gateway)
 install(PROGRAMS scripts/check_media_env.sh scripts/run_transcode_benchmark.sh
+        scripts/run_capacity_benchmark.sh
         DESTINATION share/rk-media-gateway/scripts)
 
 if(GATEWAY_BUILD_TESTS)
@@ -153,6 +154,12 @@ if(GATEWAY_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_transcode_benchmark.sh
             $<TARGET_FILE:gateway_benchmark_ffmpeg_fixture>)
     set_tests_properties(gateway_benchmark_runner_tests PROPERTIES TIMEOUT 10)
+
+    add_test(NAME gateway_capacity_runner_tests
+        COMMAND ${BASH_PROGRAM}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/capacity_runner_tests.sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_capacity_benchmark.sh)
+    set_tests_properties(gateway_capacity_runner_tests PROPERTIES TIMEOUT 5)
 
     add_test(NAME gateway_mediamtx_cli_test
         COMMAND ${CMAKE_COMMAND}

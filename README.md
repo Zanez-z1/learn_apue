@@ -166,3 +166,15 @@ FPS/丢帧配套采集方式和性能结果见
 保存原始指标与汇总，并实际生成 3 秒输出做 ffprobe 和完整软件解码校验。
 它只接受本地固定文件，
 且不覆盖已有结果。开发者验收步骤见 [docs/test-plan.md](docs/test-plan.md)。
+
+使用同一固定样本进行多通道容量短测：
+
+```bash
+/usr/local/share/rk-media-gateway/scripts/run_capacity_benchmark.sh \
+  --channels 4 --mode mpp-rga \
+  --input /absolute/path/input.mkv \
+  --output-dir /absolute/path/capacity-4
+```
+
+该命令会并发运行多条转码路径，生成每路证据和 `capacity-total.csv`。
+它测量的是重复固定样本的板卡容量，不等价于多个真实摄像头验收。

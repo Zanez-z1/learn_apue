@@ -26,6 +26,15 @@ Phase 4 已完成开发机测试和 RK3588 单路实机验收：PC 摄像头可�
 Phase 5 已完成短时软硬件性能、分辨率、码率、重复固定样本容量和画面时间戳延迟测试。
 当前媒体链路只有视频，不采集或输出音频；长时间压力和多路真实输入留待后续验收。
 
+组件职责边界：
+
+| 组件 | 来源 | 职责 |
+| --- | --- | --- |
+| `gatewayd`、`gateway-metrics`、测试脚本 | 本项目 | 配置、状态机、进程监督、HTTP 控制、指标与验收 |
+| FFmpeg-Rockchip、MPP、RGA | 上游项目 | 视频解码、缩放、格式转换和编码 |
+| MediaMTX | 上游项目 | RTSP/WebRTC/HLS 分发、录像和回放 |
+| systemd 单元和示例配置 | 本项目 | 非 root 服务编排和安全边界 |
+
 ## 构建
 
 依赖 CMake、支持 C17 的 C 编译器以及 libyaml 开发包。
@@ -89,6 +98,9 @@ curl -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
 监听地址、端口和启用状态的修改需要重启 `gatewayd`，不会通过 SIGHUP 生效。
 `gatewayd` 默认保持常驻，即使所有通道均已停止也可通过接口重新启动；仅批处理场景可
 使用 `--exit-when-idle` 让程序在全部通道结束后退出。
+
+从服务启动、RTSP/WebRTC 播放、HTTP 控制到录像和故障恢复的完整使用流程见
+[完整视频链路演示指南](docs/demo.md)。
 
 ## MediaMTX 录像配置
 

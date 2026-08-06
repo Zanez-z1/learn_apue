@@ -1657,6 +1657,47 @@ ctest --test-dir build --output-on-failure \
 结果：PASS
 ```
 
+### 8.7 完整演示与安装交付
+
+仓库必须包含 `docs/demo.md`，并明确自行实现组件与 FFmpeg-Rockchip、MPP/RGA、
+MediaMTX 的边界。演示流程至少覆盖环境检查、服务启动、健康和通道查询、RTSP/WebRTC
+播放、停止/启动/重启、录像状态与回放、故障恢复和精确进程清理；同时明确视频-only、
+回环监听、凭据和未执行长稳测试的限制。
+
+自动化契约和临时安装树：
+
+```bash
+ctest --test-dir build --output-on-failure -R gateway_deployment_tests
+install_root=$(mktemp -d /tmp/rk-gateway-delivery.XXXXXX)
+DESTDIR="$install_root" cmake --install build
+test -x "$install_root/usr/local/bin/gatewayd"
+test -x "$install_root/usr/local/bin/gateway-metrics"
+test -f "$install_root/usr/local/share/doc/rk-media-gateway/deployment.md"
+test -f "$install_root/usr/local/share/doc/rk-media-gateway/demo.md"
+test -x "$install_root/usr/local/share/rk-media-gateway/scripts/check_media_env.sh"
+test -x "$install_root/usr/local/share/rk-media-gateway/scripts/run_transcode_benchmark.sh"
+test -x "$install_root/usr/local/share/rk-media-gateway/scripts/run_capacity_benchmark.sh"
+```
+
+`gateway_deployment_tests` 还要拒绝演示文档缺少关键组件、API、播放地址或视频-only 范围，
+并把演示文档纳入已知测试密码扫描。真实服务演示结果不得由静态文档测试代替，应引用
+Phase 4/5 已执行的实板记录。
+
+实际记录：
+
+```text
+日期：2026-08-06
+部署契约测试：1/1 PASS
+临时安装树：PASS
+程序：gatewayd、gateway-metrics 可执行，--help PASS
+配置与服务：两个示例 YAML、两个 systemd 单元、tmpfiles、环境示例均存在
+文档：deployment.md、demo.md 均已安装
+脚本：环境检查、单路基准、并发容量三个脚本均可执行
+演示证据：引用 Phase 4 真实 PC 摄像头、播放/API/录像/恢复/systemd 记录及 Phase 5 时间戳截图
+未伪造项：双真实输入、30 分钟、2/24 小时和音频保持未验收
+结果：PASS
+```
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

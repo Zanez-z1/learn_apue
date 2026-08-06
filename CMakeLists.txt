@@ -57,7 +57,8 @@ install(FILES deploy/systemd/rk-media-gateway.tmpfiles.conf
         RENAME rk-media-gateway.conf)
 install(FILES deploy/systemd/gateway.env.example
         DESTINATION share/rk-media-gateway)
-install(FILES docs/deployment.md DESTINATION share/doc/rk-media-gateway)
+install(FILES docs/deployment.md docs/demo.md
+        DESTINATION share/doc/rk-media-gateway)
 install(PROGRAMS scripts/check_media_env.sh scripts/run_transcode_benchmark.sh
         scripts/run_capacity_benchmark.sh
         DESTINATION share/rk-media-gateway/scripts)

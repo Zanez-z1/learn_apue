@@ -1454,8 +1454,9 @@ runner=/usr/local/share/rk-media-gateway/scripts/run_transcode_benchmark.sh
 ```
 
 通过标准：两次运行均返回 0，CSV 不含 `unavailable`，stderr 无解码/编码
-错误，`output-probe.txt` 显示 H.264 1280×720，`output-decode.log` 为空且输出可完整
-软件解码。每个模式默认只运行约 15 秒，本节不是 30 分钟或长时间稳定性测试。
+错误，`output-probe.txt` 显示 H.264 1280×720，输出可完整软件解码。
+`output-decode.log` 可能含硬件库版本信息，不能只以非空判定失败。每个模式
+默认只运行约 15 秒，本节不是 30 分钟或长时间稳定性测试。
 
 开发机增量记录：
 
@@ -1469,7 +1470,13 @@ ASan/UBSan 行为测试：PASS
 临时安装树：PASS；运行器为可执行安装文件
 零预热诊断：ASan 启动较慢时夹具尚未安装信号处理器，改为 1 秒测试预热
 安全边界：本地普通文件、非根绝对输出目录、防覆盖、无 eval
-RK3588 720p 结果：PENDING
+RK3588 构建：Release，29/29 PASS；使用用户级 CMake 3.31.10
+RK3588 软件 720p：CPU 282.2%/300.0%，RSS 137.5/138.4 MiB，19.20fps/0.768x，drop=0
+RK3588 MPP+RGA 720p：CPU 137.5%/146.0%，RSS 18.3/18.4 MiB，1038.54fps/41.5x，drop=0
+输出验证：两份 3 秒 H.264 1280x720@25 均通过 ffprobe 和独立完整软件解码
+安全清理：无 unavailable、无解码/编码错误、无残留媒体或僵尸进程
+服务状态：rk-media-gateway/mediamtx 均 enabled/inactive
+原始证据：/home/cat/rk3588-acceptance/2026-08-06/phase5-720p
 长时间测试：本增量不执行
 ```
 

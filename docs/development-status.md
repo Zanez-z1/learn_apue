@@ -61,6 +61,21 @@ LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 ```
 
+当前 RK3588 基线：
+
+```text
+日期：2026-08-06
+平台：LubanCat aarch64，Debian 11，Linux 5.10.160
+源码：板卡无 .git；关键源文件校验值与本机 10e3432 一致
+CMake：3.31.10
+FFmpeg-Rockchip：388741a，rkmpp/rkrga 检查 PASS
+MediaMTX：v1.20.0 linux arm64
+设备访问：MPP、RGA、DRM PASS
+环境检查：0 failures，0 warnings
+板卡完整 CTest：26/26 PASS
+Phase 0：PASS
+```
+
 ## 4. 已完成增量
 
 ### 530a338：C17 单通道基础基线
@@ -265,6 +280,20 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
   源码和部署文件中未发现带内嵌凭据的 URL。夹具密码只存在于测试输入并持续验证脱敏。
 - README、开发状态、测试计划和部署文档的职责与边界已复核。开发机软件路径完成不代表
   真实 MediaMTX 录像、RK3588 硬件转码或 systemd 生命周期已经通过。
+
+### 本次增量：Phase 0 RK3588 环境基线
+
+- 通过 SSH 复用连接核验目标为 `cat@192.168.1.45`、aarch64，并在任何板卡操作前确认
+  `/home/cat/rk3588-media-gateway`；板卡目录不是 Git 仓库，因此使用关键源文件 SHA-256
+  与本机 `10e3432` 对照，结果一致。
+- 项目环境检查在 Debian 11 / Linux 5.10.160 上为 0 failures、0 warnings；`cat` 用户可
+  访问 MPP、RGA 和至少一个 DRM 节点，FFmpeg-Rockchip 提供 h264/hevc RKMpp 编解码器
+  和 `scale_rkrga`，MediaMTX 版本为 v1.20.0。
+- 使用板卡用户级 CMake 3.31.10 重新配置并构建 Release，随后完整 CTest 26/26 PASS，
+  总用时 24.28 秒。日志保存在板卡仓库外的
+  `/home/cat/rk3588-acceptance/2026-08-06/`。
+- 板卡 systemd 的 `degraded` 来自项目外 `rkwifibt.service`，没有误写成 gateway 故障；
+  Phase 0 只标记环境基线通过，不替代真实 RTSP、录像或服务生命周期验收。
 
 ## 5. 当前能力边界
 

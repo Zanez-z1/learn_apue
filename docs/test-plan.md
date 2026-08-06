@@ -232,7 +232,7 @@ MediaMTX：未安装
 
 ## 3. Phase 0：RK3588 运行环境确认
 
-状态：`PENDING`
+状态：`PASS`
 
 ### 3.1 自动检查
 
@@ -268,6 +268,43 @@ mediamtx --version
 
 通过标准：环境检查脚本无关键失败，并保存系统、FFmpeg、MediaMTX 和设备权限
 信息。没有摄像头时允许缺少 V4L2 设备，但必须能够使用文件或 RTSP 输入。
+
+### 3.3 RK3588 实机验收记录
+
+```text
+日期：2026-08-06
+本机提交：10e3432
+板卡源码：无 .git 目录；CMakeLists.txt、src/main.c 和 docs/test-plan.md 的 SHA-256
+          与本机 10e3432 完全一致
+板卡：LubanCat，aarch64
+系统：Debian GNU/Linux 11 (bullseye)
+内核：Linux 5.10.160 #13 SMP Thu Oct 16 13:39:40 CST 2025
+CMake：3.31.10（/home/cat/.local/bin/cmake）
+FFmpeg-Rockchip：388741a，启用 rkmpp/rkrga
+MediaMTX：v1.20.0 linux arm64
+MPP /dev/mpp_service：PASS（cat 用户可读写）
+RGA /dev/rga：PASS（cat 用户可读写）
+DRM：PASS（至少一个节点可读写）
+h264/hevc RKMpp 编解码器：PASS
+scale_rkrga：PASS
+环境检查：0 failures，0 warnings
+板卡 Release 配置与构建：PASS
+板卡完整 CTest：26/26 PASS，24.28 秒
+结果：PASS
+```
+
+可复核日志保存在板卡仓库外，避免将运行产物或凭据加入源码：
+
+```text
+/home/cat/rk3588-acceptance/2026-08-06/phase0-media-env.log
+/home/cat/rk3588-acceptance/2026-08-06/phase0-configure.log
+/home/cat/rk3588-acceptance/2026-08-06/phase0-build.log
+/home/cat/rk3588-acceptance/2026-08-06/phase0-ctest.log
+```
+
+补充边界：系统整体 `degraded` 来自项目外的 `rkwifibt.service` 失败；Phase 0 未把它
+归因于 gateway。此记录只证明环境、设备访问和项目测试基线，真实媒体链路在 Phase 1
+单独验收。
 
 ## 4. Phase 1：手工跑通单路媒体链路
 

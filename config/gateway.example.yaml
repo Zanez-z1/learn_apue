@@ -5,6 +5,17 @@ server:
 
 mediamtx:
   publish_base_url: rtsp://127.0.0.1:8554
+  recording:
+    enabled: true
+    directory: /var/lib/rk-media-gateway/recordings
+    format: fmp4
+    part_duration_sec: 1
+    max_part_size_mb: 50
+    segment_duration_sec: 3600
+    delete_after_sec: 604800
+    min_free_mb: 1024
+    playback_listen: 127.0.0.1
+    playback_port: 9996
 
 defaults:
   probe_timeout_sec: 10

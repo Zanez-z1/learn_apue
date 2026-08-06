@@ -169,6 +169,21 @@ void gw_config_init(gw_config *config)
     snprintf(config->mediamtx.publish_base_url,
                    sizeof(config->mediamtx.publish_base_url), "%s",
                    "rtsp://127.0.0.1:8554");
+    config->mediamtx.recording.enabled = false;
+    snprintf(config->mediamtx.recording.directory,
+             sizeof(config->mediamtx.recording.directory), "%s",
+             "/var/lib/rk-media-gateway/recordings");
+    snprintf(config->mediamtx.recording.format,
+             sizeof(config->mediamtx.recording.format), "%s", "fmp4");
+    config->mediamtx.recording.part_duration_sec = 1;
+    config->mediamtx.recording.max_part_size_mb = 50;
+    config->mediamtx.recording.segment_duration_sec = 3600;
+    config->mediamtx.recording.delete_after_sec = 86400;
+    config->mediamtx.recording.min_free_mb = 1024;
+    snprintf(config->mediamtx.recording.playback_listen,
+             sizeof(config->mediamtx.recording.playback_listen), "%s",
+             "127.0.0.1");
+    config->mediamtx.recording.playback_port = 9996U;
     config->defaults.probe_timeout_sec = 10;
     config->defaults.startup_timeout_sec = 15;
     config->defaults.progress_timeout_sec = 10;
@@ -281,6 +296,7 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
     yaml_node_t *root = yaml_document_get_root_node(document);
     yaml_node_t *server;
     yaml_node_t *mediamtx;
+    yaml_node_t *recording;
     yaml_node_t *defaults;
     yaml_node_t *channels;
     yaml_node_item_t *item;
@@ -324,6 +340,66 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
                              sizeof(config->mediamtx.publish_base_url), false, error);
         if (status != GW_OK) {
             return status;
+        }
+        recording = mapping_value(document, mediamtx, "recording");
+        if (recording != NULL) {
+            if (recording->type != YAML_MAPPING_NODE) {
+                set_error(error, GW_ERR_PARSE,
+                          "mediamtx.recording must be a mapping");
+                return GW_ERR_PARSE;
+            }
+            status = read_bool(document, recording, "enabled",
+                               &config->mediamtx.recording.enabled, error);
+            if (status != GW_OK) {
+                return status;
+            }
+            status = read_string(document, recording, "directory",
+                                 config->mediamtx.recording.directory,
+                                 sizeof(config->mediamtx.recording.directory),
+                                 false, error);
+            if (status != GW_OK) {
+                return status;
+            }
+            status = read_string(document, recording, "format",
+                                 config->mediamtx.recording.format,
+                                 sizeof(config->mediamtx.recording.format), false,
+                                 error);
+            if (status != GW_OK) {
+                return status;
+            }
+#define READ_RECORDING_INT(key, member)                                            \
+            do {                                                                   \
+                status = read_int(document, recording, key,                        \
+                                  &config->mediamtx.recording.member, false, error);\
+                if (status != GW_OK) {                                             \
+                    return status;                                                 \
+                }                                                                  \
+            } while (0)
+            READ_RECORDING_INT("part_duration_sec", part_duration_sec);
+            READ_RECORDING_INT("max_part_size_mb", max_part_size_mb);
+            READ_RECORDING_INT("segment_duration_sec", segment_duration_sec);
+            READ_RECORDING_INT("delete_after_sec", delete_after_sec);
+            READ_RECORDING_INT("min_free_mb", min_free_mb);
+#undef READ_RECORDING_INT
+            status = read_string(document, recording, "playback_listen",
+                                 config->mediamtx.recording.playback_listen,
+                                 sizeof(config->mediamtx.recording.playback_listen),
+                                 false, error);
+            if (status != GW_OK) {
+                return status;
+            }
+            port = config->mediamtx.recording.playback_port;
+            status = read_int(document, recording, "playback_port", &port,
+                              false, error);
+            if (status != GW_OK) {
+                return status;
+            }
+            if (port < 1 || port > UINT16_MAX) {
+                set_error(error, GW_ERR_VALIDATION,
+                          "mediamtx.recording.playback_port must be 1..65535");
+                return GW_ERR_VALIDATION;
+            }
+            config->mediamtx.recording.playback_port = (uint16_t)port;
         }
     }
     if (defaults != NULL) {
@@ -438,6 +514,23 @@ static bool supported_codec(const char *codec)
     return strcmp(codec, "h264_rkmpp") == 0 || strcmp(codec, "hevc_rkmpp") == 0;
 }
 
+static bool valid_absolute_directory(const char *value)
+{
+    const unsigned char *cursor = (const unsigned char *)value;
+
+    if (*cursor != '/') {
+        return false;
+    }
+    while (*cursor != '\0') {
+        if (!isalnum(*cursor) && *cursor != '/' && *cursor != '_' &&
+            *cursor != '-' && *cursor != '.') {
+            return false;
+        }
+        ++cursor;
+    }
+    return true;
+}
+
 gw_status gw_config_validate(const gw_config *config, gw_error *error)
 {
     size_t index;
@@ -463,6 +556,42 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
                   "mediamtx.publish_base_url must use rtsp://");
         return GW_ERR_VALIDATION;
     }
+    if (!valid_absolute_directory(config->mediamtx.recording.directory)) {
+        set_error(error, GW_ERR_VALIDATION,
+                  "mediamtx.recording.directory must be a safe absolute path");
+        return GW_ERR_VALIDATION;
+    }
+    if (strcmp(config->mediamtx.recording.format, "fmp4") != 0 &&
+        strcmp(config->mediamtx.recording.format, "mpegts") != 0) {
+        set_error(error, GW_ERR_VALIDATION,
+                  "mediamtx.recording.format must be fmp4 or mpegts");
+        return GW_ERR_VALIDATION;
+    }
+    if (config->mediamtx.recording.part_duration_sec < 1 ||
+        config->mediamtx.recording.part_duration_sec > 60 ||
+        config->mediamtx.recording.max_part_size_mb < 1 ||
+        config->mediamtx.recording.max_part_size_mb > 4096 ||
+        config->mediamtx.recording.segment_duration_sec < 1 ||
+        config->mediamtx.recording.segment_duration_sec > 86400 ||
+        config->mediamtx.recording.delete_after_sec < 0 ||
+        config->mediamtx.recording.min_free_mb < 0) {
+        set_error(error, GW_ERR_VALIDATION,
+                  "MediaMTX recording limits are out of range");
+        return GW_ERR_VALIDATION;
+    }
+    {
+        struct in_addr ipv4;
+        struct in6_addr ipv6;
+
+        if (inet_pton(AF_INET, config->mediamtx.recording.playback_listen,
+                      &ipv4) != 1 &&
+            inet_pton(AF_INET6, config->mediamtx.recording.playback_listen,
+                      &ipv6) != 1) {
+            set_error(error, GW_ERR_VALIDATION,
+                      "mediamtx.recording.playback_listen must be a numeric address");
+            return GW_ERR_VALIDATION;
+        }
+    }
     if (config->defaults.probe_timeout_sec <= 0 ||
         config->defaults.startup_timeout_sec <= 0 ||
         config->defaults.progress_timeout_sec <= 0 ||
@@ -486,6 +615,13 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
             if (strcmp(config->channels[previous].id, channel->id) == 0) {
                 set_error(error, GW_ERR_VALIDATION, "duplicate channel id '%s'",
                           channel->id);
+                return GW_ERR_VALIDATION;
+            }
+            if (strcmp(config->channels[previous].output.path,
+                       channel->output.path) == 0) {
+                set_error(error, GW_ERR_VALIDATION,
+                          "duplicate MediaMTX output path '%s'",
+                          channel->output.path);
                 return GW_ERR_VALIDATION;
             }
         }

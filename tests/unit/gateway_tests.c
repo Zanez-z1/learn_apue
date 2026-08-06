@@ -86,7 +86,27 @@ static void test_validation(void)
     CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
     snprintf(config.server.listen, sizeof(config.server.listen), "%s",
              "127.0.0.1");
+    snprintf(config.mediamtx.recording.format,
+             sizeof(config.mediamtx.recording.format), "%s", "avi");
+    CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
+    snprintf(config.mediamtx.recording.format,
+             sizeof(config.mediamtx.recording.format), "%s", "fmp4");
+    config.mediamtx.recording.part_duration_sec = 0;
+    CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
+    config.mediamtx.recording.part_duration_sec = 1;
+    snprintf(config.mediamtx.recording.playback_listen,
+             sizeof(config.mediamtx.recording.playback_listen), "%s",
+             "localhost");
+    CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
+    snprintf(config.mediamtx.recording.playback_listen,
+             sizeof(config.mediamtx.recording.playback_listen), "%s",
+             "127.0.0.1");
     snprintf(config.channels[0].id, sizeof(config.channels[0].id), "%s", "bad/id");
+    CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
+    snprintf(config.channels[0].id, sizeof(config.channels[0].id), "%s", "cam01");
+    config.channel_count = 2U;
+    make_channel(&config.channels[1]);
+    snprintf(config.channels[1].id, sizeof(config.channels[1].id), "%s", "cam02");
     CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
 }
 
@@ -103,6 +123,9 @@ static void test_config_loader(void)
     CHECK(config.server.enabled);
     CHECK(config.defaults.probe_timeout_sec == 10);
     CHECK(config.defaults.stable_run_sec == 60);
+    CHECK(config.mediamtx.recording.enabled);
+    CHECK(config.mediamtx.recording.segment_duration_sec == 3600);
+    CHECK(config.mediamtx.recording.delete_after_sec == 604800);
     CHECK(strcmp(config.channels[0].id, "cam01") == 0);
     CHECK(strcmp(config.channels[0].input.url,
                  "rtsp://user:password@camera/live") == 0);

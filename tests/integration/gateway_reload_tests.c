@@ -50,6 +50,16 @@ static const char invalid_config[] =
     "    video: {decoder: h264_rkmpp, width: 1280, height: 720, encoder: h264_rkmpp, bitrate_kbps: 0, fps: 25}\n"
     "    output: {path: cam01}\n";
 
+static const char recording_changed_config[] =
+    "server: {enabled: false}\n"
+    "mediamtx:\n"
+    "  recording: {enabled: true}\n"
+    "channels:\n"
+    "  - id: cam01\n"
+    "    input: {type: rtsp, url: 'rtsp://user:reload-password@camera/hold', transport: tcp}\n"
+    "    video: {decoder: h264_rkmpp, width: 1280, height: 720, encoder: h264_rkmpp, bitrate_kbps: 4000, fps: 25}\n"
+    "    output: {path: cam01}\n";
+
 static int write_config(int descriptor, const char *content)
 {
     size_t length = strlen(content);
@@ -209,6 +219,15 @@ int main(int argc, char **argv)
         fprintf(stderr, "added channel did not start\n");
         goto cleanup;
     }
+    if (write_config(config_fd, recording_changed_config) < 0 ||
+        kill(child, SIGHUP) < 0) {
+        fprintf(stderr, "cannot request recording reload: %s\n", strerror(errno));
+        goto cleanup;
+    }
+    if (wait_for_log(log_path, "MediaMTX recording changes require") < 0) {
+        fprintf(stderr, "gateway did not reject recording reload\n");
+        goto cleanup;
+    }
     if (write_config(config_fd, invalid_config) < 0 || kill(child, SIGHUP) < 0) {
         fprintf(stderr, "cannot request invalid reload: %s\n", strerror(errno));
         goto cleanup;
@@ -244,6 +263,7 @@ int main(int argc, char **argv)
     if (strstr(log_buffer,
                "Configuration reloaded: unchanged=1 added=1 removed=0 restarted=1") ==
             NULL ||
+        strstr(log_buffer, "MediaMTX recording changes require") == NULL ||
         strstr(log_buffer, "Configuration reload rejected") == NULL ||
         occurrence_count(log_buffer,
                          "channel=cam01 state=PROBING restart_count=0") != 1U ||

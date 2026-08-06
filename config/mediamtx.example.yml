@@ -1,0 +1,20 @@
+# MediaMTX v1.20-compatible recording example for gateway.example.yaml.
+# Keep playback on loopback unless an authenticated reverse proxy is configured.
+logLevel: info
+rtspAddress: 127.0.0.1:8554
+playback: true
+playbackAddress: 127.0.0.1:9996
+
+pathDefaults:
+  source: publisher
+  record: false
+
+paths:
+  cam01:
+    record: true
+    recordPath: '/var/lib/rk-media-gateway/recordings/%path/%Y-%m-%d_%H-%M-%S-%f'
+    recordFormat: fmp4
+    recordPartDuration: 1s
+    recordMaxPartSize: 50M
+    recordSegmentDuration: 3600s
+    recordDeleteAfter: 604800s

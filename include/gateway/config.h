@@ -12,6 +12,7 @@
 #define GW_ID_CAP 65U
 #define GW_URL_CAP 2048U
 #define GW_PATH_CAP 129U
+#define GW_FILE_PATH_CAP 512U
 #define GW_NAME_CAP 33U
 #define GW_ERROR_CAP 256U
 
@@ -41,7 +42,21 @@ typedef struct {
 } gw_server_config;
 
 typedef struct {
+    bool enabled;
+    char directory[GW_FILE_PATH_CAP];
+    char format[GW_NAME_CAP];
+    int part_duration_sec;
+    int max_part_size_mb;
+    int segment_duration_sec;
+    int delete_after_sec;
+    int min_free_mb;
+    char playback_listen[64];
+    uint16_t playback_port;
+} gw_recording_config;
+
+typedef struct {
     char publish_base_url[GW_URL_CAP];
+    gw_recording_config recording;
 } gw_mediamtx_config;
 
 typedef struct {

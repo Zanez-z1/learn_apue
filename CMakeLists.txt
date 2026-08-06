@@ -19,6 +19,7 @@ add_library(gateway_core
     src/channel/channel_state.c
     src/channel/supervisor.c
     src/config/config.c
+    src/config/mediamtx_config.c
     src/pipeline/pipeline_builder.c
     src/monitor/progress_parser.c
     src/process/process_manager.c
@@ -34,7 +35,7 @@ target_link_libraries(gatewayd PRIVATE gateway_core)
 target_compile_options(gatewayd PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 
 install(TARGETS gatewayd RUNTIME DESTINATION bin)
-install(FILES config/gateway.example.yaml
+install(FILES config/gateway.example.yaml config/mediamtx.example.yml
         DESTINATION share/rk-media-gateway)
 
 if(GATEWAY_BUILD_TESTS)
@@ -76,6 +77,22 @@ if(GATEWAY_BUILD_TESTS)
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
     add_test(NAME gateway_http_server_tests COMMAND gateway_http_server_tests)
     set_tests_properties(gateway_http_server_tests PROPERTIES TIMEOUT 5)
+
+    add_executable(gateway_mediamtx_config_tests
+        tests/unit/mediamtx_config_tests.c)
+    target_link_libraries(gateway_mediamtx_config_tests PRIVATE gateway_core)
+    target_compile_options(gateway_mediamtx_config_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_mediamtx_config_tests
+        COMMAND gateway_mediamtx_config_tests)
+    set_tests_properties(gateway_mediamtx_config_tests PROPERTIES TIMEOUT 5)
+
+    add_test(NAME gateway_mediamtx_cli_test
+        COMMAND ${CMAKE_COMMAND}
+            -DGATEWAY=$<TARGET_FILE:gatewayd>
+            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/config/gateway.example.yaml
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_mediamtx_config.cmake)
+    set_tests_properties(gateway_mediamtx_cli_test PROPERTIES TIMEOUT 5)
 
     add_executable(gateway_process_fixture tests/integration/process_fixture.c)
     target_compile_options(gateway_process_fixture PRIVATE

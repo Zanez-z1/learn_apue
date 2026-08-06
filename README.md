@@ -20,7 +20,8 @@ RTSP、WebRTC 和 HLS 分发。
 - 提供本地 HTTP 健康检查、通道状态查询和启动/停止/重启控制。
 - RK3588 媒体环境检查脚本。
 
-录像和 systemd 部署尚未实现，也尚未通过 RK3588 真实媒体链路验收，
+录像配置生成和自动保留策略已经实现；磁盘状态接口、systemd 部署和真实录像验收
+尚未完成，也尚未通过 RK3588 真实媒体链路验收，
 不能将当前版本作为完整网关服务部署。
 
 ## 构建
@@ -81,6 +82,22 @@ curl -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
 监听地址、端口和启用状态的修改需要重启 `gatewayd`，不会通过 SIGHUP 生效。
 `gatewayd` 默认保持常驻，即使所有通道均已停止也可通过接口重新启动；仅批处理场景可
 使用 `--exit-when-idle` 让程序在全部通道结束后退出。
+
+## MediaMTX 录像配置
+
+`mediamtx.recording` 配置录像目录、格式、分段、自动删除周期和回放监听地址。根据网关
+通道生成可直接交给 MediaMTX 的配置：
+
+```bash
+export CAM01_RTSP_URL='rtsp://user:password@camera.example/live'
+./build/gatewayd --config config/gateway.example.yaml \
+  --print-mediamtx-config > mediamtx.generated.yml
+mediamtx mediamtx.generated.yml
+```
+
+生成内容不会包含输入 URL 或密码。示例 [config/mediamtx.example.yml](config/mediamtx.example.yml)
+启用 fMP4 录像、按通道分目录、7 天自动删除和仅回环回放。修改录像参数后需要重新生成
+MediaMTX 配置并重载或重启 MediaMTX；向 `gatewayd` 发送 SIGHUP 不会修改外部服务。
 
 ## 板卡环境检查
 

@@ -295,6 +295,17 @@ server:
 
 mediamtx:
   publish_base_url: rtsp://127.0.0.1:8554
+  recording:
+    enabled: true
+    directory: /var/lib/rk-media-gateway/recordings
+    format: fmp4
+    part_duration_sec: 1
+    max_part_size_mb: 50
+    segment_duration_sec: 3600
+    delete_after_sec: 604800
+    min_free_mb: 1024
+    playback_listen: 127.0.0.1
+    playback_port: 9996
 
 defaults:
   probe_timeout_sec: 10
@@ -324,6 +335,10 @@ channels:
 ```
 
 RTSP 用户名和密码通过 systemd `EnvironmentFile` 注入，不提交到 Git 仓库。
+
+`gatewayd --print-mediamtx-config` 将已校验的录像字段和通道输出路径渲染为 MediaMTX
+配置。gatewayd 不启动或重载 MediaMTX；生成文件的部署与服务重载由管理员或 systemd
+完成。录像目录要求绝对安全路径，回放默认只监听回环地址。
 
 `probe_timeout_sec` 限制每次 ffprobe 输入探测的最长时间；探测成功后才会进入
 FFmpeg 启动阶段。

@@ -53,8 +53,8 @@ Phase 3 的开发机路径已完成，RK3588 真实媒体链路验收仍为 `PEN
 日期：2026-08-06
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：22/22 PASS
-ASan/UBSan：22/22 PASS
+常规 CTest：24/24 PASS
+ASan/UBSan：24/24 PASS
 TSan（HTTP/通道管理器/重载相关）：4/4 PASS
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
@@ -206,6 +206,18 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
   SIGTERM 和敏感信息边界。
 - HTTP 当前没有身份认证；默认回环监听是安全边界，不得直接暴露到不受信任网络。
 
+### 本次增量：MediaMTX 录像配置生成
+
+- `mediamtx.recording` 新增录像启用、绝对目录、fMP4/MPEG-TS 格式、part 大小与周期、
+  segment 周期、自动删除周期、最低空闲空间阈值和回放监听配置。
+- 配置校验限制绝对目录字符、数值范围、回放数值 IP、端口和重复 MediaMTX 输出路径。
+- `gatewayd --print-mediamtx-config` 生成每通道 MediaMTX `paths` 配置；启用通道录像，
+  禁用通道保留路径但关闭录像，并开启仅回环 playback 服务。
+- 生成器不复制输入 URL，因此不会把 RTSP 密码写入 MediaMTX 文件；容量不足和非法配置
+  明确失败。提供与当前 MediaMTX v1.20 配置字段一致的示例文件。
+- MediaMTX 仍是独立服务，gatewayd 不创建、重载或伪造其运行结果。录像参数变化需要
+  重新生成配置并由部署流程重载 MediaMTX。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -224,14 +236,14 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 
 - RK3588 板卡上的真实 RTSP/ffprobe 与 MPP/RGA 联调。
 - 真实 MediaMTX 发布端停止、恢复与重新发布联调。
-- MediaMTX 录像、systemd 部署和磁盘监控。
+- 录像磁盘状态/阈值管理、systemd 部署。
 - RK3588 真实硬件转码与稳定性/性能数据。
 
 ## 6. 下一步队列
 
 按顺序执行：
 
-1. 增加 MediaMTX 录像配置与管理能力。
+1. 增加录像目录磁盘状态和阈值管理能力。
 2. 增加 systemd 服务、环境文件和开发机服务化验收。
 
 ## 7. 文档职责

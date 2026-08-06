@@ -4,6 +4,7 @@
 #include "gateway/channel_manager.h"
 #include "gateway/config.h"
 #include "gateway/http_server.h"
+#include "gateway/mediamtx_config.h"
 #include "gateway/pipeline_builder.h"
 #include "gateway/supervisor.h"
 
@@ -39,12 +40,47 @@ static bool install_signal_handlers(void)
            sigaction(SIGHUP, &action, NULL) == 0;
 }
 
+static bool recording_config_equal(const gw_recording_config *first,
+                                   const gw_recording_config *second)
+{
+    return first->enabled == second->enabled &&
+           strcmp(first->directory, second->directory) == 0 &&
+           strcmp(first->format, second->format) == 0 &&
+           first->part_duration_sec == second->part_duration_sec &&
+           first->max_part_size_mb == second->max_part_size_mb &&
+           first->segment_duration_sec == second->segment_duration_sec &&
+           first->delete_after_sec == second->delete_after_sec &&
+           first->min_free_mb == second->min_free_mb &&
+           strcmp(first->playback_listen, second->playback_listen) == 0 &&
+           first->playback_port == second->playback_port;
+}
+
 static void print_usage(const char *program)
 {
     printf("Usage: %s --config PATH [--check-config | --dry-run] "
-           "[--exit-when-idle] [--ffprobe-binary PATH] "
+           "[--print-mediamtx-config] [--exit-when-idle] [--ffprobe-binary PATH] "
            "[--ffmpeg-binary PATH]\n",
            program);
+}
+
+static int print_mediamtx_config(const gw_config *config)
+{
+    char output[GW_MEDIAMTX_CONFIG_CAP];
+    gw_error error = {0};
+    gw_status status;
+
+    status = gw_mediamtx_render_config(config, output, sizeof(output), &error);
+    if (status != GW_OK) {
+        fprintf(stderr, "MediaMTX configuration error (%s): %s\n",
+                gw_status_string(status), error.message);
+        return 1;
+    }
+    if (fputs(output, stdout) == EOF) {
+        fprintf(stderr, "Cannot write MediaMTX configuration: %s\n",
+                strerror(errno));
+        return 1;
+    }
+    return 0;
 }
 
 static int run_dry_run(const gw_config *config, const char *ffmpeg_binary)
@@ -146,6 +182,12 @@ static int run_channels(const char *config_path, const gw_config *config,
                 fprintf(stderr,
                         "Configuration reload rejected: server.listen/port "
                         "changes require a process restart\n");
+            } else if (!recording_config_equal(
+                           &candidate.mediamtx.recording,
+                           &config->mediamtx.recording)) {
+                fprintf(stderr,
+                        "Configuration reload rejected: MediaMTX recording "
+                        "changes require regeneration and service reload\n");
             } else {
                 status = gw_channel_manager_reload(manager, &candidate, &summary,
                                                    &error);
@@ -177,6 +219,7 @@ int main(int argc, char **argv)
     const char *config_path = NULL;
     bool dry_run = false;
     bool check_only = false;
+    bool print_mediamtx = false;
     bool exit_when_idle = false;
     gw_supervisor_options options;
     gw_config config;
@@ -194,6 +237,8 @@ int main(int argc, char **argv)
             dry_run = true;
         } else if (strcmp(argv[argument], "--check-config") == 0) {
             check_only = true;
+        } else if (strcmp(argv[argument], "--print-mediamtx-config") == 0) {
+            print_mediamtx = true;
         } else if (strcmp(argv[argument], "--exit-when-idle") == 0) {
             exit_when_idle = true;
         } else if (strcmp(argv[argument], "--ffprobe-binary") == 0 &&
@@ -212,7 +257,9 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    if (config_path == NULL || (dry_run && check_only)) {
+    if (config_path == NULL || (dry_run ? 1 : 0) + (check_only ? 1 : 0) +
+                                   (print_mediamtx ? 1 : 0) >
+                                   1) {
         print_usage(argv[0]);
         return 2;
     }
@@ -223,13 +270,18 @@ int main(int argc, char **argv)
                 gw_status_string(status), error.message);
         return 1;
     }
-    printf("Configuration valid: %zu channel(s)\n", config.channel_count);
-    fflush(stdout);
+    if (!print_mediamtx) {
+        printf("Configuration valid: %zu channel(s)\n", config.channel_count);
+        fflush(stdout);
+    }
     if (check_only) {
         return 0;
     }
     if (dry_run) {
         return run_dry_run(&config, options.ffmpeg_binary);
+    }
+    if (print_mediamtx) {
+        return print_mediamtx_config(&config);
     }
 
     if (!install_signal_handlers()) {

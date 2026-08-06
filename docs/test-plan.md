@@ -795,6 +795,50 @@ TSan：HTTP/通道管理器/重载相关 4/4 PASS
 限制：使用假媒体进程；未连接真实 RTSP、MediaMTX 或 RK3588
 ```
 
+### 7.3 MediaMTX 录像配置开发机验收
+
+执行：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(unit|mediamtx_config|mediamtx_cli)_test'
+```
+
+覆盖：
+
+- YAML 加载录像启用、目录、格式、part/segment 周期、part 大小、删除周期、最低空闲
+  空间和回放监听字段。
+- 拒绝相对目录、不安全字符、未知格式、越界周期/大小、非数值监听地址、非法端口和
+  重复输出路径。
+- 生成 MediaMTX playback、`pathDefaults` 和每通道录像配置；禁用通道不录像。
+- 小输出缓冲区明确返回 `GW_ERR_OVERFLOW`。
+- CLI 输出不混入 gateway 状态行、输入 RTSP URL 或测试密码，可以安全重定向为 YAML。
+
+手工生成：
+
+```bash
+export CAM01_RTSP_URL='rtsp://user:example-password@camera/live'
+./build/gatewayd --config config/gateway.example.yaml \
+  --print-mediamtx-config > /tmp/mediamtx.generated.yml
+sed -n '1,120p' /tmp/mediamtx.generated.yml
+```
+
+开发机只验证生成内容，不得标记真实录像通过。有 MediaMTX 的环境还应执行其配置检查或
+前台启动，确认版本支持 `recordMaxPartSize` 等字段；真实流、回放和删除周期留给板卡验收。
+
+本增量验收记录：
+
+```text
+日期：2026-08-06
+测试机器：x86_64 开发机
+MediaMTX：未安装
+常规 CTest：24/24 PASS
+ASan/UBSan：24/24 PASS（LeakSanitizer 因 ptrace 环境关闭）
+结果：PASS（配置模型、渲染单元测试和 CLI 敏感信息边界）
+限制：未启动 MediaMTX，未生成真实录像分段，未验证真实回放或自动删除
+```
+
 功能完成后，本节需要覆盖：
 
 - API 默认只监听回环地址。

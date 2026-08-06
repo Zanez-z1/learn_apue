@@ -654,6 +654,10 @@ const char *gw_status_string(gw_status status)
         return "out of memory";
     case GW_ERR_OVERFLOW:
         return "size limit exceeded";
+    case GW_ERR_NOT_FOUND:
+        return "not found";
+    case GW_ERR_CONFLICT:
+        return "state conflict";
     }
     return "unknown error";
 }

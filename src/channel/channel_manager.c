@@ -18,6 +18,7 @@ struct gw_channel_entry {
     bool occupied;
     pthread_t thread;
     bool thread_started;
+    atomic_bool thread_running;
     int result;
     atomic_int stop_signal;
     uint64_t generation;
@@ -29,6 +30,7 @@ struct gw_channel_entry {
 struct gw_channel_manager {
     gw_config config;
     gw_supervisor_options caller_options;
+    pthread_mutex_t lifecycle_lock;
     pthread_rwlock_t snapshot_lock;
     atomic_int stop_signal;
     atomic_size_t active_threads;
@@ -107,6 +109,7 @@ static void *run_channel(void *context)
     entry->result = gw_supervisor_run(&entry->run_config,
                                       &entry->run_config.channels[0],
                                       &entry->options);
+    atomic_store(&entry->thread_running, false);
     atomic_fetch_sub(&entry->manager->active_threads, 1U);
     return NULL;
 }
@@ -217,10 +220,14 @@ static gw_status start_entry(gw_channel_entry *entry, gw_error *error)
 {
     int result;
 
+    entry->result = 0;
+    atomic_store(&entry->stop_signal, 0);
+    atomic_store(&entry->thread_running, true);
     atomic_fetch_add(&entry->manager->active_threads, 1U);
     result = pthread_create(&entry->thread, NULL, run_channel, entry);
     if (result != 0) {
         atomic_fetch_sub(&entry->manager->active_threads, 1U);
+        atomic_store(&entry->thread_running, false);
         set_error(error, GW_ERR_IO, "cannot start channel '%s': %s",
                   entry->run_config.channels[0].id, strerror(result));
         return GW_ERR_IO;
@@ -288,9 +295,18 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
                   strerror(result));
         return GW_ERR_IO;
     }
+    result = pthread_mutex_init(&manager->lifecycle_lock, NULL);
+    if (result != 0) {
+        pthread_rwlock_destroy(&manager->snapshot_lock);
+        free(manager);
+        set_error(error, GW_ERR_IO, "cannot initialize lifecycle lock: %s",
+                  strerror(result));
+        return GW_ERR_IO;
+    }
     for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
         manager->entries[index].manager = manager;
         atomic_init(&manager->entries[index].stop_signal, 0);
+        atomic_init(&manager->entries[index].thread_running, false);
     }
     for (index = 0U; index < config->channel_count; ++index) {
         gw_channel_entry *entry;
@@ -315,7 +331,9 @@ gw_status gw_channel_manager_start(gw_channel_manager *manager, gw_error *error)
         set_error(error, GW_ERR_ARGUMENT, "channel manager is required");
         return GW_ERR_ARGUMENT;
     }
+    pthread_mutex_lock(&manager->lifecycle_lock);
     if (manager->started) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
         set_error(error, GW_ERR_VALIDATION, "channel manager is already started");
         return GW_ERR_VALIDATION;
     }
@@ -327,10 +345,14 @@ gw_status gw_channel_manager_start(gw_channel_manager *manager, gw_error *error)
         status = start_entry(&manager->entries[index], error);
         if (status != GW_OK) {
             gw_channel_manager_request_stop(manager, SIGTERM);
-            gw_channel_manager_wait(manager);
+            for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
+                stop_entry(&manager->entries[index]);
+            }
+            pthread_mutex_unlock(&manager->lifecycle_lock);
             return status;
         }
     }
+    pthread_mutex_unlock(&manager->lifecycle_lock);
     clear_error(error);
     return GW_OK;
 }
@@ -351,12 +373,15 @@ gw_status gw_channel_manager_reload(gw_channel_manager *manager,
         return GW_ERR_ARGUMENT;
     }
     memset(summary, 0, sizeof(*summary));
+    pthread_mutex_lock(&manager->lifecycle_lock);
     if (!manager->started || atomic_load(&manager->stop_signal) != 0) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
         set_error(error, GW_ERR_VALIDATION,
                   "channel manager is not available for reload");
         return GW_ERR_VALIDATION;
     }
     if (gw_config_validate(candidate, error) != GW_OK) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
         return error != NULL ? error->code : GW_ERR_VALIDATION;
     }
     globals_equal = worker_globals_equal(&manager->config, candidate);
@@ -418,6 +443,7 @@ gw_status gw_channel_manager_reload(gw_channel_manager *manager,
     if (final_status == GW_OK) {
         clear_error(error);
     }
+    pthread_mutex_unlock(&manager->lifecycle_lock);
     return final_status;
 }
 
@@ -444,8 +470,8 @@ gw_status gw_channel_manager_get_snapshot(gw_channel_manager *manager,
         }
     }
     pthread_rwlock_unlock(&manager->snapshot_lock);
-    set_error(error, GW_ERR_VALIDATION, "channel '%s' is not managed", channel_id);
-    return GW_ERR_VALIDATION;
+    set_error(error, GW_ERR_NOT_FOUND, "channel '%s' is not managed", channel_id);
+    return GW_ERR_NOT_FOUND;
 }
 
 gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
@@ -481,6 +507,139 @@ gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
     return GW_OK;
 }
 
+static gw_channel_state entry_state(gw_channel_entry *entry)
+{
+    gw_channel_state state;
+
+    pthread_rwlock_rdlock(&entry->manager->snapshot_lock);
+    state = entry->snapshot.state;
+    pthread_rwlock_unlock(&entry->manager->snapshot_lock);
+    return state;
+}
+
+static gw_status command_entry(gw_channel_manager *manager,
+                               const char *channel_id,
+                               gw_channel_entry **entry_output,
+                               gw_error *error)
+{
+    gw_channel_entry *entry;
+
+    if (!manager->started || atomic_load(&manager->stop_signal) != 0) {
+        set_error(error, GW_ERR_CONFLICT,
+                  "channel manager is not available for control");
+        return GW_ERR_CONFLICT;
+    }
+    entry = find_entry(manager, channel_id);
+    if (entry == NULL) {
+        set_error(error, GW_ERR_NOT_FOUND, "channel '%s' is not managed",
+                  channel_id);
+        return GW_ERR_NOT_FOUND;
+    }
+    *entry_output = entry;
+    return GW_OK;
+}
+
+gw_status gw_channel_manager_start_channel(gw_channel_manager *manager,
+                                           const char *channel_id,
+                                           gw_error *error)
+{
+    gw_channel_entry *entry;
+    gw_channel_state state;
+    gw_status status;
+
+    if (manager == NULL || channel_id == NULL || channel_id[0] == '\0') {
+        set_error(error, GW_ERR_ARGUMENT, "manager and channel id are required");
+        return GW_ERR_ARGUMENT;
+    }
+    pthread_mutex_lock(&manager->lifecycle_lock);
+    status = command_entry(manager, channel_id, &entry, error);
+    if (status != GW_OK) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
+        return status;
+    }
+    if (entry->thread_started && !atomic_load(&entry->thread_running)) {
+        pthread_join(entry->thread, NULL);
+        entry->thread_started = false;
+    }
+    if (entry->thread_started) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
+        set_error(error, GW_ERR_CONFLICT, "channel '%s' is already active",
+                  channel_id);
+        return GW_ERR_CONFLICT;
+    }
+    state = entry_state(entry);
+    if (state != GW_CHANNEL_STOPPED && state != GW_CHANNEL_FAILED) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
+        set_error(error, GW_ERR_CONFLICT, "channel '%s' cannot be started from %s",
+                  channel_id, gw_channel_state_string(state));
+        return GW_ERR_CONFLICT;
+    }
+    status = start_entry(entry, error);
+    pthread_mutex_unlock(&manager->lifecycle_lock);
+    if (status == GW_OK) {
+        clear_error(error);
+    }
+    return status;
+}
+
+gw_status gw_channel_manager_stop_channel(gw_channel_manager *manager,
+                                          const char *channel_id,
+                                          gw_error *error)
+{
+    gw_channel_entry *entry;
+    gw_status status;
+
+    if (manager == NULL || channel_id == NULL || channel_id[0] == '\0') {
+        set_error(error, GW_ERR_ARGUMENT, "manager and channel id are required");
+        return GW_ERR_ARGUMENT;
+    }
+    pthread_mutex_lock(&manager->lifecycle_lock);
+    status = command_entry(manager, channel_id, &entry, error);
+    if (status != GW_OK) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
+        return status;
+    }
+    if (!entry->thread_started || !atomic_load(&entry->thread_running)) {
+        if (entry->thread_started) {
+            pthread_join(entry->thread, NULL);
+            entry->thread_started = false;
+        }
+        pthread_mutex_unlock(&manager->lifecycle_lock);
+        set_error(error, GW_ERR_CONFLICT, "channel '%s' is not active", channel_id);
+        return GW_ERR_CONFLICT;
+    }
+    stop_entry(entry);
+    pthread_mutex_unlock(&manager->lifecycle_lock);
+    clear_error(error);
+    return GW_OK;
+}
+
+gw_status gw_channel_manager_restart_channel(gw_channel_manager *manager,
+                                             const char *channel_id,
+                                             gw_error *error)
+{
+    gw_channel_entry *entry;
+    gw_status status;
+
+    if (manager == NULL || channel_id == NULL || channel_id[0] == '\0') {
+        set_error(error, GW_ERR_ARGUMENT, "manager and channel id are required");
+        return GW_ERR_ARGUMENT;
+    }
+    pthread_mutex_lock(&manager->lifecycle_lock);
+    status = command_entry(manager, channel_id, &entry, error);
+    if (status != GW_OK) {
+        pthread_mutex_unlock(&manager->lifecycle_lock);
+        return status;
+    }
+    stop_entry(entry);
+    status = start_entry(entry, error);
+    pthread_mutex_unlock(&manager->lifecycle_lock);
+    if (status == GW_OK) {
+        clear_error(error);
+    }
+    return status;
+}
+
 void gw_channel_manager_request_stop(gw_channel_manager *manager,
                                      int signal_number)
 {
@@ -503,6 +662,7 @@ int gw_channel_manager_wait(gw_channel_manager *manager)
     if (manager == NULL || !manager->started) {
         return 2;
     }
+    pthread_mutex_lock(&manager->lifecycle_lock);
     manager->result = 0;
     for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
         gw_channel_entry *entry = &manager->entries[index];
@@ -515,6 +675,7 @@ int gw_channel_manager_wait(gw_channel_manager *manager)
             manager->result = 1;
         }
     }
+    pthread_mutex_unlock(&manager->lifecycle_lock);
     return manager->result;
 }
 
@@ -529,6 +690,7 @@ void gw_channel_manager_destroy(gw_channel_manager *manager)
     if (manager->started) {
         gw_channel_manager_wait(manager);
     }
+    pthread_mutex_destroy(&manager->lifecycle_lock);
     pthread_rwlock_destroy(&manager->snapshot_lock);
     free(manager);
 }

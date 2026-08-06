@@ -17,10 +17,10 @@ RTSP、WebRTC 和 HLS 分发。
 - 启动 FFmpeg 前执行 ffprobe 输入探测，并检查视频编码与硬件解码器是否匹配。
 - 多个启用通道并行运行，一个通道失败不会停止其他通道。
 - 支持通过 SIGHUP 重新读取配置，只新增、删除或重启发生变化的通道。
-- 提供本地只读 HTTP 健康检查和通道状态查询。
+- 提供本地 HTTP 健康检查、通道状态查询和启动/停止/重启控制。
 - RK3588 媒体环境检查脚本。
 
-HTTP 写控制、录像和 systemd 部署尚未实现，也尚未通过 RK3588 真实媒体链路验收，
+录像和 systemd 部署尚未实现，也尚未通过 RK3588 真实媒体链路验收，
 不能将当前版本作为完整网关服务部署。
 
 ## 构建
@@ -60,7 +60,7 @@ kill -HUP <gatewayd-pid>
 时，未变化通道继续运行，只对新增、删除或内容变化的通道执行对应操作。SIGINT 和
 SIGTERM 仍用于停止全部通道。
 
-## 只读 HTTP 状态
+## HTTP 状态与控制
 
 示例配置默认在 `127.0.0.1:9080` 启用 HTTP。`server.listen` 必须是数值 IPv4 或
 IPv6 地址；如不需要控制面，可设置 `server.enabled: false`。
@@ -69,10 +69,18 @@ IPv6 地址；如不需要控制面，可设置 `server.enabled: false`。
 curl http://127.0.0.1:9080/v1/health
 curl http://127.0.0.1:9080/v1/channels
 curl http://127.0.0.1:9080/v1/channels/cam01
+curl -X POST http://127.0.0.1:9080/v1/channels/cam01/stop
+curl -X POST http://127.0.0.1:9080/v1/channels/cam01/start
+curl -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
 ```
 
-当前接口只接受 GET，不返回输入 URL 或密码。监听地址、端口和启用状态的修改需要
-重启 `gatewayd`，不会通过 SIGHUP 生效。
+查询接口只接受 GET，控制接口只接受 POST。成功接受控制命令时返回 202；通道不存在
+返回 404；命令与当前状态冲突返回 409。接口不返回输入 URL 或密码。
+
+当前 HTTP 服务没有身份认证，默认回环监听是安全边界，不应直接暴露到不受信任的网络。
+监听地址、端口和启用状态的修改需要重启 `gatewayd`，不会通过 SIGHUP 生效。
+`gatewayd` 默认保持常驻，即使所有通道均已停止也可通过接口重新启动；仅批处理场景可
+使用 `--exit-when-idle` 让程序在全部通道结束后退出。
 
 ## 板卡环境检查
 

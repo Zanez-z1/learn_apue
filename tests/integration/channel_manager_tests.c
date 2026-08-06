@@ -4,6 +4,7 @@
 #include "gateway/config.h"
 #include "gateway/supervisor.h"
 
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -81,7 +82,7 @@ static void test_two_channel_success(const char *fixture)
     CHECK(strcmp(second.last_event, "clean_exit") == 0);
     CHECK(first.has_progress && second.has_progress);
     CHECK(gw_channel_manager_get_snapshot(manager, "missing", &first, &error) ==
-          GW_ERR_VALIDATION);
+          GW_ERR_NOT_FOUND);
     gw_channel_manager_destroy(manager);
 }
 
@@ -163,6 +164,96 @@ static int wait_for_state(gw_channel_manager *manager, const char *channel_id,
     return 0;
 }
 
+typedef struct {
+    gw_channel_manager *manager;
+    const char *channel_id;
+    gw_status status;
+} start_request;
+
+static void *start_channel(void *context)
+{
+    start_request *request = context;
+    gw_error error = {0};
+
+    request->status = gw_channel_manager_start_channel(
+        request->manager, request->channel_id, &error);
+    return NULL;
+}
+
+static void test_channel_controls(const char *fixture)
+{
+    gw_channel_manager *manager = NULL;
+    gw_supervisor_options options;
+    gw_channel_snapshot snapshot;
+    gw_config config;
+    gw_error error = {0};
+    start_request first_request;
+    start_request second_request;
+    pthread_t first_thread;
+    pthread_t second_thread;
+    int first_created;
+    int second_created;
+
+    make_config(&config, false);
+    snprintf(config.channels[0].input.url, sizeof(config.channels[0].input.url),
+             "%s", "rtsp://fixture-user:fixture-password@camera/hold");
+    snprintf(config.channels[1].input.url, sizeof(config.channels[1].input.url),
+             "%s", "rtsp://fixture-user:fixture-password@camera/hold-two");
+    gw_supervisor_options_init(&options);
+    options.ffprobe_binary = fixture;
+    options.ffmpeg_binary = fixture;
+    CHECK(gw_channel_manager_create(&manager, &config, &options, &error) == GW_OK);
+    CHECK(gw_channel_manager_start_channel(manager, "cam01", &error) ==
+          GW_ERR_CONFLICT);
+    CHECK(gw_channel_manager_start(manager, &error) == GW_OK);
+    CHECK(wait_for_state(manager, "cam01", GW_CHANNEL_RUNNING, 1U, &snapshot));
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 1U, &snapshot));
+
+    CHECK(gw_channel_manager_stop_channel(manager, "missing", &error) ==
+          GW_ERR_NOT_FOUND);
+    CHECK(gw_channel_manager_stop_channel(manager, "cam02", &error) == GW_OK);
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_STOPPED, 1U, &snapshot));
+    CHECK(gw_channel_manager_stop_channel(manager, "cam02", &error) ==
+          GW_ERR_CONFLICT);
+    CHECK(gw_channel_manager_start_channel(manager, "cam02", &error) == GW_OK);
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 1U, &snapshot));
+    CHECK(gw_channel_manager_start_channel(manager, "cam02", &error) ==
+          GW_ERR_CONFLICT);
+    CHECK(gw_channel_manager_restart_channel(manager, "cam02", &error) == GW_OK);
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 1U, &snapshot));
+
+    CHECK(gw_channel_manager_stop_channel(manager, "cam02", &error) == GW_OK);
+    first_request.manager = manager;
+    first_request.channel_id = "cam02";
+    first_request.status = GW_ERR_IO;
+    second_request = first_request;
+    first_created = pthread_create(&first_thread, NULL, start_channel,
+                                   &first_request);
+    second_created = pthread_create(&second_thread, NULL, start_channel,
+                                    &second_request);
+    CHECK(first_created == 0);
+    CHECK(second_created == 0);
+    if (first_created == 0) {
+        pthread_join(first_thread, NULL);
+    }
+    if (second_created == 0) {
+        pthread_join(second_thread, NULL);
+    }
+    if (first_created == 0 && second_created == 0) {
+        CHECK((first_request.status == GW_OK &&
+               second_request.status == GW_ERR_CONFLICT) ||
+              (first_request.status == GW_ERR_CONFLICT &&
+               second_request.status == GW_OK));
+    }
+    CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 1U, &snapshot));
+
+    gw_channel_manager_request_stop(manager, SIGTERM);
+    CHECK(gw_channel_manager_wait(manager) == 0);
+    CHECK(gw_channel_manager_start_channel(manager, "cam01", &error) ==
+          GW_ERR_CONFLICT);
+    gw_channel_manager_destroy(manager);
+}
+
 static void test_differential_reload(const char *fixture)
 {
     gw_channel_manager *manager = NULL;
@@ -215,7 +306,7 @@ static void test_differential_reload(const char *fixture)
     CHECK(summary.added == 1U);
     CHECK(summary.removed == 1U);
     CHECK(gw_channel_manager_get_snapshot(manager, "cam02", &second, &error) ==
-          GW_ERR_VALIDATION);
+          GW_ERR_NOT_FOUND);
     CHECK(wait_for_state(manager, "cam01", GW_CHANNEL_RUNNING, 1U, &first));
     CHECK(wait_for_state(manager, "cam03", GW_CHANNEL_RUNNING, 1U, &second));
 
@@ -233,6 +324,7 @@ int main(int argc, char **argv)
     test_two_channel_success(argv[1]);
     test_channel_failure_isolation(argv[1]);
     test_stop_all_channels(argv[1]);
+    test_channel_controls(argv[1]);
     test_differential_reload(argv[1]);
     if (failures != 0) {
         fprintf(stderr, "%d channel manager test(s) failed.\n", failures);

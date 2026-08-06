@@ -23,7 +23,9 @@ typedef enum {
     GW_ERR_VALIDATION,
     GW_ERR_ENV,
     GW_ERR_NO_MEMORY,
-    GW_ERR_OVERFLOW
+    GW_ERR_OVERFLOW,
+    GW_ERR_NOT_FOUND,
+    GW_ERR_CONFLICT
 } gw_status;
 
 /* Optional diagnostic returned alongside a gw_status value. */

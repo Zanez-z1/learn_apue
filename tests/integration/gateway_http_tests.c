@@ -158,6 +158,41 @@ static int expect_response(unsigned int port, const char *request,
     return 0;
 }
 
+static int wait_for_channel_state(unsigned int port, const char *state,
+                                  long different_pid, long *observed_pid)
+{
+    static const char request[] =
+        "GET /v1/channels/cam01 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    char response[131072];
+    char expected[64];
+    int attempt;
+
+    snprintf(expected, sizeof(expected), "\"state\":\"%s\"", state);
+    for (attempt = 0; attempt < 100; ++attempt) {
+        char *pid_field;
+        long pid = -1L;
+
+        if (request_http(port, request, strlen(request), response,
+                         sizeof(response)) == 0 &&
+            strstr(response, "HTTP/1.1 200 OK") != NULL &&
+            strstr(response, expected) != NULL &&
+            strstr(response, "http-password") == NULL &&
+            strstr(response, "rtsp://") == NULL) {
+            pid_field = strstr(response, "\"pid\":");
+            if (pid_field != NULL && sscanf(pid_field, "\"pid\":%ld", &pid) == 1 &&
+                (different_pid <= 0L || pid != different_pid)) {
+                if (observed_pid != NULL) {
+                    *observed_pid = pid;
+                }
+                return 0;
+            }
+        }
+        pause_milliseconds(20L);
+    }
+    fprintf(stderr, "channel did not reach state %s with a new pid\n", state);
+    return -1;
+}
+
 int main(int argc, char **argv)
 {
     char config_path[] = "/tmp/gateway-http-config-XXXXXX";
@@ -173,6 +208,8 @@ int main(int argc, char **argv)
     int status = 0;
     int result;
     unsigned int port = 0U;
+    long initial_pid = -1L;
+    long started_pid = -1L;
     bool actions_initialized = false;
     int exit_code = 1;
 
@@ -230,6 +267,37 @@ int main(int argc, char **argv)
         expect_response(port,
                         "POST /v1/channels/cam01 HTTP/1.1\r\nHost: localhost\r\n\r\n",
                         "HTTP/1.1 405 Method Not Allowed", "Allow: GET") < 0) {
+        goto cleanup;
+    }
+
+    if (wait_for_channel_state(port, "RUNNING", -1L, &initial_pid) < 0 ||
+        expect_response(port,
+                        "GET /v1/channels/cam01/stop HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                        "HTTP/1.1 405 Method Not Allowed", "Allow: POST") < 0 ||
+        expect_response(port,
+                        "POST /v1/channels/missing/start HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+                        "HTTP/1.1 404 Not Found", "\"error\":\"not_found\"") <
+            0 ||
+        expect_response(port,
+                        "POST /v1/channels/cam01/stop HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+                        "HTTP/1.1 202 Accepted", "\"action\":\"stop\"") < 0 ||
+        wait_for_channel_state(port, "STOPPED", -1L, NULL) < 0 ||
+        expect_response(port,
+                        "POST /v1/channels/cam01/stop HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+                        "HTTP/1.1 409 Conflict", "\"error\":\"state_conflict\"") <
+            0 ||
+        expect_response(port,
+                        "POST /v1/channels/cam01/start HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+                        "HTTP/1.1 202 Accepted", "\"action\":\"start\"") < 0 ||
+        wait_for_channel_state(port, "RUNNING", initial_pid, &started_pid) < 0 ||
+        expect_response(port,
+                        "POST /v1/channels/cam01/start HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+                        "HTTP/1.1 409 Conflict", "\"error\":\"state_conflict\"") <
+            0 ||
+        expect_response(port,
+                        "POST /v1/channels/cam01/restart HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
+                        "HTTP/1.1 202 Accepted", "\"action\":\"restart\"") < 0 ||
+        wait_for_channel_state(port, "RUNNING", started_pid, NULL) < 0) {
         goto cleanup;
     }
 

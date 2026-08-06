@@ -61,37 +61,54 @@ static void test_read_only_routes(void)
     gw_error error = {0};
 
     CHECK(manager != NULL);
-    CHECK(gw_http_route_read_only(manager, "GET", "/v1/health", &response,
-                                  &error) == GW_OK);
+    CHECK(gw_http_route(manager, "GET", "/v1/health", &response, &error) ==
+          GW_OK);
     CHECK(response.status_code == 200);
     CHECK(strstr(response.body, "\"status\":\"ok\"") != NULL);
     CHECK(strstr(response.body, "\"channel_count\":2") != NULL);
 
-    CHECK(gw_http_route_read_only(manager, "GET", "/v1/channels", &response,
-                                  &error) == GW_OK);
+    CHECK(gw_http_route(manager, "GET", "/v1/channels", &response, &error) ==
+          GW_OK);
     CHECK(response.status_code == 200);
     CHECK(strstr(response.body, "\"id\":\"cam01\"") != NULL);
     CHECK(strstr(response.body, "\"id\":\"cam02\"") != NULL);
     CHECK(strstr(response.body, "unit-password") == NULL);
     CHECK(strstr(response.body, "rtsp://") == NULL);
 
-    CHECK(gw_http_route_read_only(manager, "GET", "/v1/channels/cam02",
-                                  &response, &error) == GW_OK);
+    CHECK(gw_http_route(manager, "GET", "/v1/channels/cam02", &response,
+                        &error) == GW_OK);
     CHECK(response.status_code == 200);
     CHECK(strstr(response.body, "\"id\":\"cam02\"") != NULL);
     CHECK(strstr(response.body, "\"state\":\"STOPPED\"") != NULL);
 
-    CHECK(gw_http_route_read_only(manager, "GET", "/v1/channels/missing",
-                                  &response, &error) == GW_OK);
+    CHECK(gw_http_route(manager, "GET", "/v1/channels/missing", &response,
+                        &error) == GW_OK);
     CHECK(response.status_code == 404);
     CHECK(strstr(response.body, "\"error\":\"not_found\"") != NULL);
 
-    CHECK(gw_http_route_read_only(manager, "POST", "/v1/channels/cam01",
-                                  &response, &error) == GW_OK);
+    CHECK(gw_http_route(manager, "POST", "/v1/channels/cam01", &response,
+                        &error) == GW_OK);
     CHECK(response.status_code == 405);
     CHECK(response.allow_get);
-    CHECK(gw_http_route_read_only(manager, "GET", "/v1/channels/cam01/extra",
-                                  &response, &error) == GW_OK);
+    CHECK(!response.allow_post);
+    CHECK(gw_http_route(manager, "POST", "/v1/health", &response, &error) ==
+          GW_OK);
+    CHECK(response.status_code == 405);
+    CHECK(response.allow_get);
+    CHECK(gw_http_route(manager, "GET", "/v1/channels/cam01/start", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 405);
+    CHECK(!response.allow_get);
+    CHECK(response.allow_post);
+    CHECK(gw_http_route(manager, "POST", "/v1/channels/cam01/start", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 409);
+    CHECK(strstr(response.body, "\"error\":\"state_conflict\"") != NULL);
+    CHECK(gw_http_route(manager, "POST", "/v1/channels/missing/start", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 409);
+    CHECK(gw_http_route(manager, "GET", "/v1/channels/cam01/extra", &response,
+                        &error) == GW_OK);
     CHECK(response.status_code == 404);
     gw_channel_manager_destroy(manager);
 }

@@ -4,6 +4,7 @@ endif()
 
 execute_process(
     COMMAND "${GATEWAY}" --config "${CONFIG}"
+            --exit-when-idle
             --ffprobe-binary "${FIXTURE}" --ffmpeg-binary "${FIXTURE}"
     RESULT_VARIABLE gateway_result
     OUTPUT_VARIABLE gateway_stdout

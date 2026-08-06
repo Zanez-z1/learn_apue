@@ -10,6 +10,7 @@ execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env "GW_FIXTURE_MODE=${MODE}"
             "GW_PROBE_FIXTURE_MODE=${PROBE_MODE}"
             "${GATEWAY}" --config "${CONFIG}"
+            --exit-when-idle
             --ffprobe-binary "${FIXTURE}" --ffmpeg-binary "${FIXTURE}"
     RESULT_VARIABLE gateway_result
     OUTPUT_VARIABLE gateway_stdout

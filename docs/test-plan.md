@@ -699,6 +699,8 @@ SIGTERM 与资源清理：PENDING
 - `GET /v1/health`、`GET /v1/channels` 和 `GET /v1/channels/{id}`。
 - 受锁保护的批量快照复制和有界 JSON 响应。
 - 404、405、431 错误响应以及 URL/密码不进入 API 响应的安全边界。
+- `POST /v1/channels/{id}/start`、`stop` 和 `restart` 生命周期控制。
+- 控制命令与 SIGHUP 重载串行化，以及重复/并发命令的 409 冲突响应。
 
 ### 7.1 只读 HTTP 开发机验收
 
@@ -739,9 +741,62 @@ TSan：HTTP/通道管理器/重载相关 4/4 PASS
 限制：仅测试本机回环 HTTP 和假媒体进程，未连接真实 RTSP、MediaMTX 或 RK3588
 ```
 
+### 7.2 HTTP 通道控制开发机验收
+
+执行：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(http_server|http|channel_manager|reload)_tests'
+```
+
+`gateway_channel_manager_tests` 验证：
+
+- 管理器启动前和全局退出期间拒绝控制命令。
+- 运行通道可以停止、停止通道可以重新启动，重启会更换工作进程。
+- 重复启动和重复停止返回 `GW_ERR_CONFLICT`，未知通道返回
+  `GW_ERR_NOT_FOUND`。
+- 两个 POSIX 线程同时启动同一停止通道时，生命周期锁保证恰好一个成功，另一个得到
+  状态冲突。
+- 生命周期控制完成后仍可执行差异化配置重载，最终统一停止并回收全部工作进程。
+
+`gateway_http_server_tests` 和 `gateway_http_tests` 验证：
+
+- 三个动作路由只接受 POST，并返回包含通道 ID 与动作的 202 JSON。
+- GET 动作路由返回 405 和 `Allow: POST`；未知通道返回 404；重复命令返回 409。
+- 停止后状态变为 `STOPPED`，随后启动恢复为 `RUNNING`；启动和重启后的工作进程 PID
+  与先前不同。
+- 停止最后一个通道后 `gatewayd` 仍保持 HTTP 可用，并能再次启动该通道。
+- 所有响应和日志继续检查测试 URL 密码不得泄露。
+
+手工调用示例：
+
+```bash
+curl -i -X POST http://127.0.0.1:9080/v1/channels/cam01/stop
+curl -i -X POST http://127.0.0.1:9080/v1/channels/cam01/start
+curl -i -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
+```
+
+预期：合法命令返回 202；重复命令返回 409；不存在通道返回 404。HTTP 服务目前没有
+身份认证，只能在回环或等价的受信任网络边界内使用。
+
+本增量验收记录：
+
+```text
+日期：2026-08-06
+测试机器：x86_64 开发机
+相关常规 CTest：4/4 PASS
+完整常规 CTest：22/22 PASS
+ASan/UBSan：22/22 PASS（LeakSanitizer 因 ptrace 环境关闭）
+TSan：HTTP/通道管理器/重载相关 4/4 PASS
+覆盖：HTTP 路由、通道管理器并发控制、SIGHUP 互斥、真实回环端到端控制
+限制：使用假媒体进程；未连接真实 RTSP、MediaMTX 或 RK3588
+```
+
 功能完成后，本节需要覆盖：
 
-- 通道启动、停止和重启接口。
 - API 默认只监听回环地址。
 - MediaMTX 录像与回放。
 - 磁盘空间不足处理。

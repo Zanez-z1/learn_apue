@@ -151,6 +151,7 @@ if(GATEWAY_BUILD_TESTS)
     add_test(NAME gateway_single_channel_test
         COMMAND gatewayd
             --config ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
+            --exit-when-idle
             --ffprobe-binary $<TARGET_FILE:gateway_process_fixture>
             --ffmpeg-binary $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_single_channel_test PROPERTIES
@@ -169,6 +170,7 @@ if(GATEWAY_BUILD_TESTS)
     add_test(NAME gateway_stable_run_test
         COMMAND gatewayd
             --config ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
+            --exit-when-idle
             --ffprobe-binary $<TARGET_FILE:gateway_process_fixture>
             --ffmpeg-binary $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_stable_run_test PROPERTIES

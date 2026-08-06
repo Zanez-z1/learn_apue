@@ -42,6 +42,19 @@ gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
                                             size_t capacity, size_t *count,
                                             gw_error *error);
 
+/* Serialized lifecycle commands used by the HTTP control plane. */
+gw_status gw_channel_manager_start_channel(gw_channel_manager *manager,
+                                           const char *channel_id,
+                                           gw_error *error);
+
+gw_status gw_channel_manager_stop_channel(gw_channel_manager *manager,
+                                          const char *channel_id,
+                                          gw_error *error);
+
+gw_status gw_channel_manager_restart_channel(gw_channel_manager *manager,
+                                             const char *channel_id,
+                                             gw_error *error);
+
 /* Thread-safe and idempotent; signal_number should normally be SIGINT/SIGTERM. */
 void gw_channel_manager_request_stop(gw_channel_manager *manager,
                                      int signal_number);

@@ -42,7 +42,8 @@ static bool install_signal_handlers(void)
 static void print_usage(const char *program)
 {
     printf("Usage: %s --config PATH [--check-config | --dry-run] "
-           "[--ffprobe-binary PATH] [--ffmpeg-binary PATH]\n",
+           "[--exit-when-idle] [--ffprobe-binary PATH] "
+           "[--ffmpeg-binary PATH]\n",
            program);
 }
 
@@ -81,7 +82,7 @@ static int run_dry_run(const gw_config *config, const char *ffmpeg_binary)
 }
 
 static int run_channels(const char *config_path, const gw_config *config,
-                        gw_supervisor_options *options)
+                        gw_supervisor_options *options, bool exit_when_idle)
 {
     const struct timespec poll_interval = {.tv_sec = 0, .tv_nsec = 100000000L};
     gw_channel_manager *manager = NULL;
@@ -121,9 +122,14 @@ static int run_channels(const char *config_path, const gw_config *config,
         printf("HTTP listening on %s:%u\n", config->server.listen,
                (unsigned int)gw_http_server_port(http_server));
     }
-    while (!gw_channel_manager_is_finished(manager)) {
+    for (;;) {
+        bool finished = gw_channel_manager_is_finished(manager);
+
         if (stop_signal != 0) {
             gw_channel_manager_request_stop(manager, (int)stop_signal);
+            if (finished) {
+                break;
+            }
         } else if (reload_requested != 0) {
             gw_channel_reload_summary summary;
             gw_config candidate;
@@ -154,6 +160,8 @@ static int run_channels(const char *config_path, const gw_config *config,
                     fflush(stdout);
                 }
             }
+        } else if (exit_when_idle && finished) {
+            break;
         }
         nanosleep(&poll_interval, NULL);
     }
@@ -169,6 +177,7 @@ int main(int argc, char **argv)
     const char *config_path = NULL;
     bool dry_run = false;
     bool check_only = false;
+    bool exit_when_idle = false;
     gw_supervisor_options options;
     gw_config config;
     gw_error error = {0};
@@ -185,6 +194,8 @@ int main(int argc, char **argv)
             dry_run = true;
         } else if (strcmp(argv[argument], "--check-config") == 0) {
             check_only = true;
+        } else if (strcmp(argv[argument], "--exit-when-idle") == 0) {
+            exit_when_idle = true;
         } else if (strcmp(argv[argument], "--ffprobe-binary") == 0 &&
                    argument + 1 < argc) {
             options.ffprobe_binary = argv[++argument];
@@ -225,5 +236,5 @@ int main(int argc, char **argv)
         fprintf(stderr, "Cannot install signal handlers: %s\n", strerror(errno));
         return 1;
     }
-    return run_channels(config_path, &config, &options);
+    return run_channels(config_path, &config, &options, exit_when_idle);
 }

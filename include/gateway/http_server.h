@@ -17,14 +17,15 @@ typedef struct gw_http_server gw_http_server;
 typedef struct {
     int status_code;
     bool allow_get;
+    bool allow_post;
     char body[GW_HTTP_BODY_CAP];
     size_t body_length;
 } gw_http_response;
 
-/* Pure router used by the socket server and unit tests. */
-gw_status gw_http_route_read_only(gw_channel_manager *manager,
-                                  const char *method, const char *target,
-                                  gw_http_response *response, gw_error *error);
+/* Router used by the socket server and unit tests. Control routes mutate manager state. */
+gw_status gw_http_route(gw_channel_manager *manager, const char *method,
+                        const char *target, gw_http_response *response,
+                        gw_error *error);
 
 /* The manager is borrowed and must outlive the server. */
 gw_status gw_http_server_create(gw_http_server **server,

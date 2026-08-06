@@ -211,9 +211,45 @@ static gw_status error_response(gw_http_response *response, int status_code,
     return finish_response(response, &writer, error);
 }
 
-gw_status gw_http_route_read_only(gw_channel_manager *manager,
-                                  const char *method, const char *target,
-                                  gw_http_response *response, gw_error *error)
+static bool parse_action_target(const char *target, char *channel_id,
+                                size_t channel_capacity, const char **action)
+{
+    const char *remainder;
+    const char *separator;
+    size_t id_length;
+
+    if (strncmp(target, "/v1/channels/", 13U) != 0) {
+        return false;
+    }
+    remainder = target + 13;
+    separator = strchr(remainder, '/');
+    if (separator == NULL || separator == remainder || separator[1] == '\0' ||
+        strchr(separator + 1, '/') != NULL) {
+        return false;
+    }
+    id_length = (size_t)(separator - remainder);
+    if (id_length >= channel_capacity) {
+        return false;
+    }
+    memcpy(channel_id, remainder, id_length);
+    channel_id[id_length] = '\0';
+    *action = separator + 1;
+    return strcmp(*action, "start") == 0 || strcmp(*action, "stop") == 0 ||
+           strcmp(*action, "restart") == 0;
+}
+
+static gw_status method_not_allowed(gw_http_response *response, bool allow_get,
+                                    bool allow_post, gw_error *error)
+{
+    response->allow_get = allow_get;
+    response->allow_post = allow_post;
+    return error_response(response, 405, "method_not_allowed",
+                          "method is not allowed for this route", error);
+}
+
+gw_status gw_http_route(gw_channel_manager *manager, const char *method,
+                        const char *target, gw_http_response *response,
+                        gw_error *error)
 {
     gw_channel_snapshot snapshots[GW_MAX_CHANNELS];
     gw_channel_snapshot snapshot;
@@ -221,6 +257,8 @@ gw_status gw_http_route_read_only(gw_channel_manager *manager,
     size_t count = 0U;
     size_t index;
     gw_status status;
+    char channel_id[GW_ID_CAP];
+    const char *action;
 
     if (manager == NULL || method == NULL || target == NULL || response == NULL) {
         set_error(error, GW_ERR_ARGUMENT,
@@ -228,11 +266,6 @@ gw_status gw_http_route_read_only(gw_channel_manager *manager,
         return GW_ERR_ARGUMENT;
     }
     memset(response, 0, sizeof(*response));
-    if (strcmp(method, "GET") != 0) {
-        response->allow_get = true;
-        return error_response(response, 405, "method_not_allowed",
-                              "only GET is allowed", error);
-    }
     writer.data = response->body;
     writer.capacity = sizeof(response->body);
     writer.length = 0U;
@@ -243,6 +276,9 @@ gw_status gw_http_route_read_only(gw_channel_manager *manager,
         size_t running = 0U;
         size_t failed = 0U;
 
+        if (strcmp(method, "GET") != 0) {
+            return method_not_allowed(response, true, false, error);
+        }
         status = gw_channel_manager_list_snapshots(
             manager, snapshots, GW_MAX_CHANNELS, &count, error);
         if (status != GW_OK) {
@@ -258,6 +294,9 @@ gw_status gw_http_route_read_only(gw_channel_manager *manager,
         return finish_response(response, &writer, error);
     }
     if (strcmp(target, "/v1/channels") == 0) {
+        if (strcmp(method, "GET") != 0) {
+            return method_not_allowed(response, true, false, error);
+        }
         status = gw_channel_manager_list_snapshots(
             manager, snapshots, GW_MAX_CHANNELS, &count, error);
         if (status != GW_OK) {
@@ -275,6 +314,9 @@ gw_status gw_http_route_read_only(gw_channel_manager *manager,
     }
     if (strncmp(target, "/v1/channels/", 13U) == 0 && target[13] != '\0' &&
         strchr(target + 13, '/') == NULL) {
+        if (strcmp(method, "GET") != 0) {
+            return method_not_allowed(response, true, false, error);
+        }
         status = gw_channel_manager_get_snapshot(manager, target + 13, &snapshot,
                                                  error);
         if (status != GW_OK) {
@@ -283,6 +325,40 @@ gw_status gw_http_route_read_only(gw_channel_manager *manager,
         }
         json_snapshot(&writer, &snapshot);
         json_append(&writer, "\n");
+        return finish_response(response, &writer, error);
+    }
+    if (parse_action_target(target, channel_id, sizeof(channel_id), &action)) {
+        if (strcmp(method, "POST") != 0) {
+            return method_not_allowed(response, false, true, error);
+        }
+        if (strcmp(action, "start") == 0) {
+            status = gw_channel_manager_start_channel(manager, channel_id, error);
+        } else if (strcmp(action, "stop") == 0) {
+            status = gw_channel_manager_stop_channel(manager, channel_id, error);
+        } else {
+            status = gw_channel_manager_restart_channel(manager, channel_id,
+                                                        error);
+        }
+        if (status == GW_ERR_NOT_FOUND) {
+            return error_response(response, 404, "not_found",
+                                  "channel was not found", error);
+        }
+        if (status == GW_ERR_CONFLICT) {
+            return error_response(response, 409, "state_conflict",
+                                  "channel command conflicts with current state",
+                                  error);
+        }
+        if (status != GW_OK) {
+            return status;
+        }
+        response->status_code = 202;
+        writer.length = 0U;
+        writer.failed = false;
+        json_append(&writer, "{\"status\":\"accepted\",\"channel_id\":");
+        json_string(&writer, channel_id);
+        json_append(&writer, ",\"action\":");
+        json_string(&writer, action);
+        json_append(&writer, "}\n");
         return finish_response(response, &writer, error);
     }
     return error_response(response, 404, "not_found", "route was not found",
@@ -294,12 +370,16 @@ static const char *reason_phrase(int status_code)
     switch (status_code) {
     case 200:
         return "OK";
+    case 202:
+        return "Accepted";
     case 400:
         return "Bad Request";
     case 404:
         return "Not Found";
     case 405:
         return "Method Not Allowed";
+    case 409:
+        return "Conflict";
     case 431:
         return "Request Header Fields Too Large";
     default:
@@ -339,10 +419,15 @@ static void send_response(int descriptor, const gw_http_response *response)
                       "Content-Type: application/json\r\n"
                       "Content-Length: %zu\r\n"
                       "Connection: close\r\n"
-                      "X-Content-Type-Options: nosniff\r\n%s\r\n",
+                      "X-Content-Type-Options: nosniff\r\n%s%s\r\n",
                       response->status_code,
                       reason_phrase(response->status_code), response->body_length,
-                      response->allow_get ? "Allow: GET\r\n" : "");
+                      response->allow_get && response->allow_post
+                          ? "Allow: GET, POST\r\n"
+                          : response->allow_get ? "Allow: GET\r\n" : "",
+                      !response->allow_get && response->allow_post
+                          ? "Allow: POST\r\n"
+                          : "");
     if (length <= 0 || (size_t)length >= sizeof(headers)) {
         return;
     }
@@ -413,8 +498,7 @@ static void handle_connection(gw_http_server *server, int descriptor)
         respond_error(descriptor, 400, "bad_request", "invalid request line");
         return;
     }
-    if (gw_http_route_read_only(server->manager, method, target, &response,
-                                &error) != GW_OK) {
+    if (gw_http_route(server->manager, method, target, &response, &error) != GW_OK) {
         respond_error(descriptor, 500, "internal_error",
                       "cannot build HTTP response");
         return;

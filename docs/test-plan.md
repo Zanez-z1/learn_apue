@@ -308,7 +308,7 @@ scale_rkrga：PASS
 
 ## 4. Phase 1：手工跑通单路媒体链路
 
-状态：`PENDING`
+状态：`IN PROGRESS`
 
 功能开发和板卡环境准备完成后，本节需要补充：
 
@@ -320,6 +320,53 @@ scale_rkrga：PASS
 - CPU、RSS、FPS、丢帧和错误记录。
 
 通过标准：单路 1080p 视频连续硬件转码和播放 30 分钟。
+
+### 4.1 真实 PC 摄像头 5 分钟冒烟验收
+
+本增量按当前执行顺序先验证至少 5 分钟，原有 30 分钟通过标准保留到所有 Phase 4
+功能和故障恢复完成后执行。PC 集成摄像头原生最高支持 MJPEG 1280×720@30fps，不得
+写成原生 1080p；PC FFmpeg 将真实画面上采样并编码为 H.264 1920×1080@25fps，再通过
+同网段临时 MediaMTX 提供真实 RTSP 输入：
+
+```text
+/dev/video0 (MJPEG 1280x720@30)
+  -> PC FFmpeg (H.264 1920x1080@25, 8 Mbit/s)
+  -> rtsp://192.168.1.16:8554/source
+  -> RK3588 gatewayd: h264_rkmpp + scale_rkrga + h264_rkmpp
+  -> RK3588 MediaMTX cam01
+  -> PC RTSP / WebRTC reader
+```
+
+验收记录：
+
+```text
+日期：2026-08-06
+本机提交：f672c7d 的父功能版本 10e3432（本次仅追加验收文档）
+输入：PC Integrated Camera，原生 MJPEG 1280x720@30，PC 上采样 H.264 1920x1080@25
+板卡输入探测：H.264，1920x1080，25/1 fps
+板卡处理链：h264_rkmpp -> scale_rkrga 1920x1080 NV12 -> h264_rkmpp 6000 kbit/s
+连续运行：至少 10 分 44 秒
+最终状态：RUNNING，frame=16106，fps=25.04，speed=1.00，drop_frames=0
+重启：0；连续失败：0；工作进程 PID 在采样期间不变
+工作进程 CPU：约 19.8%～21.7%；RSS：约 19.2 MiB；采样温度：约 39.8°C
+RTSP：PASS；PC FFmpeg 实际读取板卡 H.264 1920x1080@25 输出并正常退出
+WebRTC：PASS；MediaMTX 记录 peer connection established 和读取 cam01；用户确认可见画面
+主观 WebRTC 延迟：约 1～2 秒，尚未进行低延迟专项优化
+音频：不在当前链路中；gateway FFmpeg 使用 -an，输出与录像均只有视频
+结果：PASS（至少 5 分钟摄像头/RTSP/WebRTC 冒烟）；PENDING（30 分钟最终长稳）
+```
+
+运行期间 FFmpeg 发布端先出现一次 `461 Unsupported Transport`，随后自动使用可接受的
+传输方式成功发布并稳定运行，未触发通道重启。该现象保留为后续明确发布传输配置的检查项。
+
+板卡仓库外证据：
+
+```text
+/home/cat/rk3588-acceptance/2026-08-06/phase1-camera-gateway.log
+/home/cat/rk3588-acceptance/2026-08-06/phase1-camera-source-probe.log
+/home/cat/rk3588-acceptance/2026-08-06/phase1-camera-final-status.json
+/home/cat/rk3588-acceptance/2026-08-06/phase1-mediamtx.log
+```
 
 ## 5. Phase 2：单通道 gatewayd
 

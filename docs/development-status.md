@@ -281,7 +281,7 @@ Phase 0：PASS
 - README、开发状态、测试计划和部署文档的职责与边界已复核。开发机软件路径完成不代表
   真实 MediaMTX 录像、RK3588 硬件转码或 systemd 生命周期已经通过。
 
-### 本次增量：Phase 0 RK3588 环境基线
+### f672c7d：Phase 0 RK3588 环境基线
 
 - 通过 SSH 复用连接核验目标为 `cat@192.168.1.45`、aarch64，并在任何板卡操作前确认
   `/home/cat/rk3588-media-gateway`；板卡目录不是 Git 仓库，因此使用关键源文件 SHA-256
@@ -294,6 +294,22 @@ Phase 0：PASS
   `/home/cat/rk3588-acceptance/2026-08-06/`。
 - 板卡 systemd 的 `degraded` 来自项目外 `rkwifibt.service`，没有误写成 gateway 故障；
   Phase 0 只标记环境基线通过，不替代真实 RTSP、录像或服务生命周期验收。
+
+### 本次增量：真实 PC 摄像头 RK3588 媒体冒烟
+
+- PC 集成摄像头原生上限为 MJPEG 1280×720@30fps；PC FFmpeg 实时上采样并编码为
+  H.264 1920×1080@25fps，通过 PC 临时 MediaMTX 向板卡提供真实网络 RTSP 输入。
+  记录中没有把上采样流描述成摄像头原生 1080p。
+- gatewayd 在 RK3588 上探测到 H.264 1920×1080，实际启动 `h264_rkmpp` 解码、
+  `scale_rkrga` 和 `h264_rkmpp` 编码并发布到板卡 MediaMTX。至少连续运行 10 分 44 秒，
+  最终为 25.04fps、speed 1.00、0 丢帧、0 重启。
+- PC FFmpeg 通过局域网实际读取板卡 RTSP 输出；MediaMTX 记录 WebRTC peer connection
+  established 和读取 `cam01`，用户在 PC 浏览器确认能够看到实时摄像头画面，主观延迟
+  约 1～2 秒。
+- 当前媒体链路显式使用 `-an`，没有音轨，MediaMTX 录像也只能得到视频。音频采集、
+  透传或编码属于后续独立功能，不在本轮实机验收中伪装为已支持。
+- 一次发布 `SETUP` 先返回 461，随后成功发布且稳定运行；该兼容性现象保留待后续明确
+  输出 RTSP 传输方式。原 Phase 1 的 30 分钟标准尚未执行，当前只标记 5 分钟冒烟通过。
 
 ## 5. 当前能力边界
 

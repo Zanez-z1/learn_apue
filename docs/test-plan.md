@@ -691,11 +691,56 @@ SIGTERM 与资源清理：PENDING
 
 ## 7. Phase 4：控制接口、录像和服务化
 
-状态：`PENDING`
+状态：`IN PROGRESS`
+
+当前已经实现：
+
+- 可配置启停的本地 HTTP 服务，默认监听 `127.0.0.1:9080`。
+- `GET /v1/health`、`GET /v1/channels` 和 `GET /v1/channels/{id}`。
+- 受锁保护的批量快照复制和有界 JSON 响应。
+- 404、405、431 错误响应以及 URL/密码不进入 API 响应的安全边界。
+
+### 7.1 只读 HTTP 开发机验收
+
+执行：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(http_server|http)_tests'
+```
+
+`gateway_http_server_tests` 不创建 socket，直接验证：
+
+- 健康检查返回通道总数、运行数和失败数。
+- 列表及单通道 JSON 包含状态、进程、探测和 progress 字段。
+- 不存在通道和路由返回 404，非 GET 返回 405 和 `Allow: GET`。
+- 快照批量复制容量不足时返回 `GW_ERR_OVERFLOW`，不发布部分计数。
+- JSON 中不出现输入 RTSP URL 或密码。
+
+`gateway_http_tests` 启动真实 `gatewayd`，使用 `server.port: 0` 取得内核分配的临时
+回环端口，并验证：
+
+- 三个只读端点能够通过 HTTP/1.1 socket 访问。
+- 响应包含正确状态行、`Content-Length`、JSON 类型、`nosniff` 和关闭连接语义。
+- 未知通道返回 404，POST 返回 405，8192 字节无结束请求头返回 431。
+- SIGTERM 后 HTTP 线程、通道和工作进程均正常退出。
+- API 和 gateway 日志均不出现测试密码。
+
+本增量验收记录：
+
+```text
+日期：2026-08-06
+测试机器：x86_64 开发机
+常规 CTest：22/22 PASS
+ASan/UBSan：22/22 PASS（LeakSanitizer 因 ptrace 环境关闭）
+TSan：HTTP/通道管理器/重载相关 4/4 PASS
+限制：仅测试本机回环 HTTP 和假媒体进程，未连接真实 RTSP、MediaMTX 或 RK3588
+```
 
 功能完成后，本节需要覆盖：
 
-- HTTP 健康检查和通道查询。
 - 通道启动、停止和重启接口。
 - API 默认只监听回环地址。
 - MediaMTX 录像与回放。

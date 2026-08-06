@@ -1,6 +1,7 @@
 /* YAML-to-gw_config translation, defaulting, expansion, and policy validation. */
 #include "gateway/config.h"
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -161,6 +162,7 @@ void gw_config_init(gw_config *config)
         return;
     }
     memset(config, 0, sizeof(*config));
+    config->server.enabled = true;
     snprintf(config->server.listen, sizeof(config->server.listen), "%s",
                    "127.0.0.1");
     config->server.port = 9080U;
@@ -295,6 +297,11 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
     channels = mapping_value(document, root, "channels");
 
     if (server != NULL) {
+        status = read_bool(document, server, "enabled", &config->server.enabled,
+                           error);
+        if (status != GW_OK) {
+            return status;
+        }
         status = read_string(document, server, "listen", config->server.listen,
                              sizeof(config->server.listen), false, error);
         if (status != GW_OK) {
@@ -305,8 +312,8 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
         if (status != GW_OK) {
             return status;
         }
-        if (port <= 0 || port > UINT16_MAX) {
-            set_error(error, GW_ERR_VALIDATION, "server.port must be 1..65535");
+        if (port < 0 || port > UINT16_MAX) {
+            set_error(error, GW_ERR_VALIDATION, "server.port must be 0..65535");
             return GW_ERR_VALIDATION;
         }
         config->server.port = (uint16_t)port;
@@ -440,9 +447,16 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
         set_error(error, GW_ERR_ARGUMENT, "configuration is required");
         return GW_ERR_ARGUMENT;
     }
-    if (config->server.port == 0U) {
-        set_error(error, GW_ERR_VALIDATION, "server.port must be 1..65535");
-        return GW_ERR_VALIDATION;
+    {
+        struct in_addr ipv4;
+        struct in6_addr ipv6;
+
+        if (inet_pton(AF_INET, config->server.listen, &ipv4) != 1 &&
+            inet_pton(AF_INET6, config->server.listen, &ipv6) != 1) {
+            set_error(error, GW_ERR_VALIDATION,
+                      "server.listen must be a numeric IPv4 or IPv6 address");
+            return GW_ERR_VALIDATION;
+        }
     }
     if (strncmp(config->mediamtx.publish_base_url, "rtsp://", 7U) != 0) {
         set_error(error, GW_ERR_VALIDATION,

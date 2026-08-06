@@ -44,8 +44,8 @@ git status --short --branch
 
 ## 3. 当前阶段
 
-当前阶段：Phase 3——多通道与异常恢复，状态为 `IN PROGRESS`。Phase 2 的开发机
-软件路径已完成，RK3588 真实媒体链路验收仍为 `PENDING`。
+当前阶段：Phase 4——控制接口、录像和服务化，开发机软件路径状态为 `IN PROGRESS`。
+Phase 3 的开发机路径已完成，RK3588 真实媒体链路验收仍为 `PENDING`。
 
 当前开发机测试基线：
 
@@ -53,9 +53,9 @@ git status --short --branch
 日期：2026-08-06
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：20/20 PASS
-ASan/UBSan：20/20 PASS
-TSan（多通道/重载/故障恢复相关）：5/5 PASS
+常规 CTest：22/22 PASS
+ASan/UBSan：22/22 PASS
+TSan（HTTP/通道管理器/重载相关）：4/4 PASS
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 ```
@@ -169,7 +169,7 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - 该测试未连接 MediaMTX，只证明 gateway 对“FFmpeg 因发布端故障退出”的恢复路径；
   真实 RTSP 发布和 MediaMTX 停止/启动仍属于实机验收。
 
-### 本次增量：Phase 3 开发机审计与实机清单
+### f30682d：Phase 3 开发机审计与实机清单
 
 - Phase 3 的开发机软件路径已覆盖多通道隔离、有限退避、工作进程失败、输入/发布
   故障恢复和差异化重载，测试证据逐项记录在 `docs/test-plan.md`。
@@ -177,6 +177,21 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
   MediaMTX，未将夹具结果替代为实机结果。
 - `docs/test-plan.md` 已增加可执行的板卡验收清单和记录模板，包含基线播放、输入断流、
   工作进程崩溃、MediaMTX 停启、SIGHUP、密码脱敏和资源清理。
+
+### 本次增量：只读 HTTP 服务
+
+- 新增独立 `src/api/http_server.c` 模块，提供有界 HTTP/1.0/1.1 请求读取、JSON
+  序列化和回环 socket 服务。
+- 提供 `GET /v1/health`、`GET /v1/channels` 和
+  `GET /v1/channels/{id}`，通道快照在管理器读锁下批量复制。
+- JSON 只暴露状态、进程、探测和 progress 指标，不包含输入 URL；字符串统一转义，
+  非有限浮点数输出为 `null`。
+- 非 GET 返回 405，未知资源返回 404，超过 8192 字节的请求头返回 431；响应包含
+  `nosniff` 和 `Connection: close`。
+- 新增 `server.enabled`；默认启用并监听 `127.0.0.1`，测试夹具可显式关闭。监听地址
+  只接受数值 IPv4/IPv6，监听配置变化通过 SIGHUP 明确拒绝并要求进程重启。
+- 单元测试覆盖路由、列表容量和敏感信息边界；CLI 端到端测试覆盖真实回环连接、三类
+  查询、404、405、431、SIGTERM 和密码脱敏。
 
 ## 5. 当前能力边界
 
@@ -189,13 +204,14 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - 信号停止、超时清理、自动重试和失败终态。
 - SIGHUP 候选配置校验与按通道差异化重载。
 - 开发机夹具模拟输入或发布端中断后，故障通道可独立退避并恢复运行。
+- 本地只读 HTTP 健康检查、通道列表和单通道状态 JSON 查询。
 - 开发机假工作进程端到端验证。
 
 尚未具备：
 
 - RK3588 板卡上的真实 RTSP/ffprobe 与 MPP/RGA 联调。
 - 真实 MediaMTX 发布端停止、恢复与重新发布联调。
-- 通道状态查询和 HTTP 控制 API。
+- HTTP 通道启动、停止和重启控制。
 - MediaMTX 录像、systemd 部署和磁盘监控。
 - RK3588 真实硬件转码与稳定性/性能数据。
 
@@ -203,9 +219,9 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 
 按顺序执行：
 
-1. 在 RK3588 上执行 `docs/test-plan.md` 的 Phase 3 实机验收清单并保存原始日志。
-2. 在安装 MediaMTX 的环境执行服务停止、恢复和通道重新发布验收。
-3. 在等待板卡验收期间开始 Phase 4 的只读 HTTP 健康检查和通道查询设计。
+1. 实现并发安全的 HTTP 通道启动、停止和重启控制。
+2. 增加 MediaMTX 录像配置与管理能力。
+3. 增加 systemd 服务、环境文件和开发机服务化验收。
 
 ## 7. 文档职责
 

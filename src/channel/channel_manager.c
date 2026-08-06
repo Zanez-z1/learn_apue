@@ -448,6 +448,39 @@ gw_status gw_channel_manager_get_snapshot(gw_channel_manager *manager,
     return GW_ERR_VALIDATION;
 }
 
+gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
+                                            gw_channel_snapshot *snapshots,
+                                            size_t capacity, size_t *count,
+                                            gw_error *error)
+{
+    size_t index;
+    size_t copied = 0U;
+
+    if (manager == NULL || snapshots == NULL || count == NULL) {
+        set_error(error, GW_ERR_ARGUMENT,
+                  "manager, snapshot array, and count output are required");
+        return GW_ERR_ARGUMENT;
+    }
+    *count = 0U;
+    pthread_rwlock_rdlock(&manager->snapshot_lock);
+    for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
+        if (!manager->entries[index].occupied) {
+            continue;
+        }
+        if (copied >= capacity) {
+            pthread_rwlock_unlock(&manager->snapshot_lock);
+            set_error(error, GW_ERR_OVERFLOW,
+                      "snapshot array capacity is too small");
+            return GW_ERR_OVERFLOW;
+        }
+        snapshots[copied++] = manager->entries[index].snapshot;
+    }
+    pthread_rwlock_unlock(&manager->snapshot_lock);
+    *count = copied;
+    clear_error(error);
+    return GW_OK;
+}
+
 void gw_channel_manager_request_stop(gw_channel_manager *manager,
                                      int signal_number)
 {

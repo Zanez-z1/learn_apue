@@ -1,0 +1,610 @@
+/* Bounded HTTP/1.x parsing, JSON serialization, and local socket service. */
+#define _POSIX_C_SOURCE 200809L
+
+#include "gateway/http_server.h"
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <math.h>
+#include <netdb.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+#define HTTP_REQUEST_CAP 8192U
+#define HTTP_TARGET_CAP 2048U
+
+typedef struct {
+    char *data;
+    size_t capacity;
+    size_t length;
+    bool failed;
+} json_writer;
+
+struct gw_http_server {
+    gw_server_config config;
+    gw_channel_manager *manager;
+    int listen_fd;
+    uint16_t bound_port;
+    pthread_t thread;
+    bool thread_started;
+    atomic_bool stop_requested;
+};
+
+static void set_error(gw_error *error, gw_status code, const char *format, ...)
+{
+    va_list arguments;
+
+    if (error == NULL) {
+        return;
+    }
+    error->code = code;
+    va_start(arguments, format);
+    vsnprintf(error->message, sizeof(error->message), format, arguments);
+    va_end(arguments);
+}
+
+static void clear_error(gw_error *error)
+{
+    if (error != NULL) {
+        error->code = GW_OK;
+        error->message[0] = '\0';
+    }
+}
+
+static void json_append(json_writer *writer, const char *format, ...)
+{
+    va_list arguments;
+    int written;
+    size_t available;
+
+    if (writer->failed) {
+        return;
+    }
+    available = writer->capacity - writer->length;
+    va_start(arguments, format);
+    written = vsnprintf(writer->data + writer->length, available, format,
+                        arguments);
+    va_end(arguments);
+    if (written < 0 || (size_t)written >= available) {
+        writer->failed = true;
+        return;
+    }
+    writer->length += (size_t)written;
+}
+
+static void json_string(json_writer *writer, const char *value)
+{
+    const unsigned char *cursor = (const unsigned char *)value;
+
+    json_append(writer, "\"");
+    while (!writer->failed && *cursor != '\0') {
+        switch (*cursor) {
+        case '"':
+            json_append(writer, "\\\"");
+            break;
+        case '\\':
+            json_append(writer, "\\\\");
+            break;
+        case '\b':
+            json_append(writer, "\\b");
+            break;
+        case '\f':
+            json_append(writer, "\\f");
+            break;
+        case '\n':
+            json_append(writer, "\\n");
+            break;
+        case '\r':
+            json_append(writer, "\\r");
+            break;
+        case '\t':
+            json_append(writer, "\\t");
+            break;
+        default:
+            if (*cursor < 0x20U || *cursor >= 0x80U) {
+                json_append(writer, "\\u%04x", (unsigned int)*cursor);
+            } else {
+                json_append(writer, "%c", (int)*cursor);
+            }
+            break;
+        }
+        ++cursor;
+    }
+    json_append(writer, "\"");
+}
+
+static void json_snapshot(json_writer *writer,
+                          const gw_channel_snapshot *snapshot)
+{
+    json_append(writer, "{\"id\":");
+    json_string(writer, snapshot->channel_id);
+    json_append(writer, ",\"state\":");
+    json_string(writer, gw_channel_state_string(snapshot->state));
+    json_append(writer, ",\"last_event\":");
+    json_string(writer, snapshot->last_event);
+    json_append(writer, ",\"process\":{\"kind\":");
+    json_string(writer, gw_channel_process_kind_string(snapshot->process_kind));
+    json_append(writer, ",\"pid\":%ld},\"consecutive_failures\":%u,"
+                        "\"total_restarts\":%llu,"
+                        "\"configuration_generation\":%llu,"
+                        "\"backoff_sec\":%d,\"last_exit_code\":",
+                (long)snapshot->process_pid, snapshot->consecutive_failures,
+                (unsigned long long)snapshot->total_restarts,
+                (unsigned long long)snapshot->configuration_generation,
+                snapshot->backoff_sec);
+    if (snapshot->has_exit_code) {
+        json_append(writer, "%d", snapshot->last_exit_code);
+    } else {
+        json_append(writer, "null");
+    }
+    json_append(writer, ",\"probe\":");
+    if (snapshot->has_probe) {
+        json_append(writer, "{\"codec\":");
+        json_string(writer, snapshot->probe.codec_name);
+        json_append(writer, ",\"width\":%d,\"height\":%d}",
+                    snapshot->probe.width, snapshot->probe.height);
+    } else {
+        json_append(writer, "null");
+    }
+    json_append(writer, ",\"progress\":");
+    if (snapshot->has_progress) {
+        json_append(writer, "{\"frame\":%llu,\"fps\":",
+                    (unsigned long long)snapshot->progress.frame);
+        if (isfinite(snapshot->progress.fps)) {
+            json_append(writer, "%.3f", snapshot->progress.fps);
+        } else {
+            json_append(writer, "null");
+        }
+        json_append(writer, ",\"bitrate\":");
+        json_string(writer, snapshot->progress.bitrate);
+        json_append(writer,
+                    ",\"out_time_us\":%lld,\"drop_frames\":%llu,"
+                    "\"speed\":",
+                    (long long)snapshot->progress.out_time_us,
+                    (unsigned long long)snapshot->progress.drop_frames);
+        if (isfinite(snapshot->progress.speed)) {
+            json_append(writer, "%.3f", snapshot->progress.speed);
+        } else {
+            json_append(writer, "null");
+        }
+        json_append(writer, ",\"status\":");
+        json_string(writer, snapshot->progress.status);
+        json_append(writer, "}");
+    } else {
+        json_append(writer, "null");
+    }
+    json_append(writer, "}");
+}
+
+static gw_status finish_response(gw_http_response *response, json_writer *writer,
+                                 gw_error *error)
+{
+    if (writer->failed) {
+        set_error(error, GW_ERR_OVERFLOW, "HTTP JSON response exceeds capacity");
+        return GW_ERR_OVERFLOW;
+    }
+    response->body_length = writer->length;
+    clear_error(error);
+    return GW_OK;
+}
+
+static gw_status error_response(gw_http_response *response, int status_code,
+                                const char *code, const char *message,
+                                gw_error *error)
+{
+    json_writer writer = {response->body, sizeof(response->body), 0U, false};
+
+    response->status_code = status_code;
+    json_append(&writer, "{\"error\":");
+    json_string(&writer, code);
+    json_append(&writer, ",\"message\":");
+    json_string(&writer, message);
+    json_append(&writer, "}\n");
+    return finish_response(response, &writer, error);
+}
+
+gw_status gw_http_route_read_only(gw_channel_manager *manager,
+                                  const char *method, const char *target,
+                                  gw_http_response *response, gw_error *error)
+{
+    gw_channel_snapshot snapshots[GW_MAX_CHANNELS];
+    gw_channel_snapshot snapshot;
+    json_writer writer;
+    size_t count = 0U;
+    size_t index;
+    gw_status status;
+
+    if (manager == NULL || method == NULL || target == NULL || response == NULL) {
+        set_error(error, GW_ERR_ARGUMENT,
+                  "manager, method, target, and response are required");
+        return GW_ERR_ARGUMENT;
+    }
+    memset(response, 0, sizeof(*response));
+    if (strcmp(method, "GET") != 0) {
+        response->allow_get = true;
+        return error_response(response, 405, "method_not_allowed",
+                              "only GET is allowed", error);
+    }
+    writer.data = response->body;
+    writer.capacity = sizeof(response->body);
+    writer.length = 0U;
+    writer.failed = false;
+    response->status_code = 200;
+
+    if (strcmp(target, "/v1/health") == 0) {
+        size_t running = 0U;
+        size_t failed = 0U;
+
+        status = gw_channel_manager_list_snapshots(
+            manager, snapshots, GW_MAX_CHANNELS, &count, error);
+        if (status != GW_OK) {
+            return status;
+        }
+        for (index = 0U; index < count; ++index) {
+            running += snapshots[index].state == GW_CHANNEL_RUNNING ? 1U : 0U;
+            failed += snapshots[index].state == GW_CHANNEL_FAILED ? 1U : 0U;
+        }
+        json_append(&writer, "{\"status\":\"%s\",\"channel_count\":%zu,"
+                             "\"running\":%zu,\"failed\":%zu}\n",
+                    failed == 0U ? "ok" : "degraded", count, running, failed);
+        return finish_response(response, &writer, error);
+    }
+    if (strcmp(target, "/v1/channels") == 0) {
+        status = gw_channel_manager_list_snapshots(
+            manager, snapshots, GW_MAX_CHANNELS, &count, error);
+        if (status != GW_OK) {
+            return status;
+        }
+        json_append(&writer, "{\"channels\":[");
+        for (index = 0U; index < count; ++index) {
+            if (index != 0U) {
+                json_append(&writer, ",");
+            }
+            json_snapshot(&writer, &snapshots[index]);
+        }
+        json_append(&writer, "]}\n");
+        return finish_response(response, &writer, error);
+    }
+    if (strncmp(target, "/v1/channels/", 13U) == 0 && target[13] != '\0' &&
+        strchr(target + 13, '/') == NULL) {
+        status = gw_channel_manager_get_snapshot(manager, target + 13, &snapshot,
+                                                 error);
+        if (status != GW_OK) {
+            return error_response(response, 404, "not_found",
+                                  "channel was not found", error);
+        }
+        json_snapshot(&writer, &snapshot);
+        json_append(&writer, "\n");
+        return finish_response(response, &writer, error);
+    }
+    return error_response(response, 404, "not_found", "route was not found",
+                          error);
+}
+
+static const char *reason_phrase(int status_code)
+{
+    switch (status_code) {
+    case 200:
+        return "OK";
+    case 400:
+        return "Bad Request";
+    case 404:
+        return "Not Found";
+    case 405:
+        return "Method Not Allowed";
+    case 431:
+        return "Request Header Fields Too Large";
+    default:
+        return "Internal Server Error";
+    }
+}
+
+static bool send_all(int descriptor, const char *data, size_t length)
+{
+    size_t sent = 0U;
+
+    while (sent < length) {
+        ssize_t result;
+#ifdef MSG_NOSIGNAL
+        result = send(descriptor, data + sent, length - sent, MSG_NOSIGNAL);
+#else
+        result = send(descriptor, data + sent, length - sent, 0);
+#endif
+        if (result < 0 && errno == EINTR) {
+            continue;
+        }
+        if (result <= 0) {
+            return false;
+        }
+        sent += (size_t)result;
+    }
+    return true;
+}
+
+static void send_response(int descriptor, const gw_http_response *response)
+{
+    char headers[512];
+    int length;
+
+    length = snprintf(headers, sizeof(headers),
+                      "HTTP/1.1 %d %s\r\n"
+                      "Content-Type: application/json\r\n"
+                      "Content-Length: %zu\r\n"
+                      "Connection: close\r\n"
+                      "X-Content-Type-Options: nosniff\r\n%s\r\n",
+                      response->status_code,
+                      reason_phrase(response->status_code), response->body_length,
+                      response->allow_get ? "Allow: GET\r\n" : "");
+    if (length <= 0 || (size_t)length >= sizeof(headers)) {
+        return;
+    }
+    if (send_all(descriptor, headers, (size_t)length)) {
+        send_all(descriptor, response->body, response->body_length);
+    }
+}
+
+static void respond_error(int descriptor, int status_code, const char *code,
+                          const char *message)
+{
+    gw_http_response response = {0};
+    gw_error error = {0};
+
+    if (error_response(&response, status_code, code, message, &error) == GW_OK) {
+        send_response(descriptor, &response);
+    }
+}
+
+static void handle_connection(gw_http_server *server, int descriptor)
+{
+    char request[HTTP_REQUEST_CAP + 1U];
+    char method[8];
+    char target[HTTP_TARGET_CAP];
+    char version[16];
+    char extra;
+    char *line_end;
+    size_t used = 0U;
+    gw_http_response response;
+    gw_error error = {0};
+    struct timeval timeout = {.tv_sec = 2, .tv_usec = 0};
+
+    setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    while (used < HTTP_REQUEST_CAP) {
+        ssize_t received = recv(descriptor, request + used,
+                                HTTP_REQUEST_CAP - used, 0);
+
+        if (received < 0 && errno == EINTR) {
+            continue;
+        }
+        if (received <= 0) {
+            respond_error(descriptor, 400, "bad_request",
+                          "incomplete HTTP request");
+            return;
+        }
+        used += (size_t)received;
+        request[used] = '\0';
+        if (strstr(request, "\r\n\r\n") != NULL) {
+            break;
+        }
+    }
+    if (used == HTTP_REQUEST_CAP && strstr(request, "\r\n\r\n") == NULL) {
+        respond_error(descriptor, 431, "headers_too_large",
+                      "HTTP headers exceed the limit");
+        return;
+    }
+    line_end = strstr(request, "\r\n");
+    if (line_end == NULL) {
+        respond_error(descriptor, 400, "bad_request", "invalid request line");
+        return;
+    }
+    *line_end = '\0';
+    if (sscanf(request, "%7s %2047s %15s %c", method, target, version, &extra) !=
+            3 ||
+        (strcmp(version, "HTTP/1.1") != 0 &&
+         strcmp(version, "HTTP/1.0") != 0)) {
+        respond_error(descriptor, 400, "bad_request", "invalid request line");
+        return;
+    }
+    if (gw_http_route_read_only(server->manager, method, target, &response,
+                                &error) != GW_OK) {
+        respond_error(descriptor, 500, "internal_error",
+                      "cannot build HTTP response");
+        return;
+    }
+    send_response(descriptor, &response);
+}
+
+static void *run_server(void *context)
+{
+    gw_http_server *server = context;
+
+    while (!atomic_load(&server->stop_requested)) {
+        struct pollfd descriptor = {
+            .fd = server->listen_fd,
+            .events = POLLIN,
+            .revents = 0
+        };
+        int result = poll(&descriptor, 1, 100);
+
+        if (result < 0 && errno != EINTR) {
+            break;
+        }
+        if (result > 0 && (descriptor.revents & POLLIN) != 0) {
+            int client = accept(server->listen_fd, NULL, NULL);
+
+            if (client >= 0) {
+                handle_connection(server, client);
+                close(client);
+            }
+        }
+    }
+    return NULL;
+}
+
+gw_status gw_http_server_create(gw_http_server **server_output,
+                                const gw_server_config *config,
+                                gw_channel_manager *manager, gw_error *error)
+{
+    gw_http_server *server;
+
+    if (server_output == NULL || config == NULL || manager == NULL) {
+        set_error(error, GW_ERR_ARGUMENT,
+                  "server output, configuration, and manager are required");
+        return GW_ERR_ARGUMENT;
+    }
+    *server_output = NULL;
+    server = calloc(1U, sizeof(*server));
+    if (server == NULL) {
+        set_error(error, GW_ERR_NO_MEMORY, "cannot allocate HTTP server");
+        return GW_ERR_NO_MEMORY;
+    }
+    server->config = *config;
+    server->manager = manager;
+    server->listen_fd = -1;
+    atomic_init(&server->stop_requested, false);
+    *server_output = server;
+    clear_error(error);
+    return GW_OK;
+}
+
+static gw_status bind_listener(gw_http_server *server, gw_error *error)
+{
+    struct addrinfo hints;
+    struct addrinfo *addresses = NULL;
+    struct addrinfo *address;
+    char port[16];
+    int result;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE | AI_NUMERICHOST;
+    snprintf(port, sizeof(port), "%u", (unsigned int)server->config.port);
+    result = getaddrinfo(server->config.listen, port, &hints, &addresses);
+    if (result != 0) {
+        set_error(error, GW_ERR_VALIDATION, "cannot resolve server.listen '%s': %s",
+                  server->config.listen, gai_strerror(result));
+        return GW_ERR_VALIDATION;
+    }
+    for (address = addresses; address != NULL; address = address->ai_next) {
+        int option = 1;
+
+        server->listen_fd = socket(address->ai_family, address->ai_socktype,
+                                   address->ai_protocol);
+        if (server->listen_fd < 0) {
+            continue;
+        }
+        setsockopt(server->listen_fd, SOL_SOCKET, SO_REUSEADDR, &option,
+                   sizeof(option));
+        if (bind(server->listen_fd, address->ai_addr, address->ai_addrlen) == 0 &&
+            listen(server->listen_fd, 16) == 0) {
+            break;
+        }
+        close(server->listen_fd);
+        server->listen_fd = -1;
+    }
+    freeaddrinfo(addresses);
+    if (server->listen_fd < 0) {
+        set_error(error, GW_ERR_IO, "cannot bind HTTP server on %s:%u: %s",
+                  server->config.listen, (unsigned int)server->config.port,
+                  strerror(errno));
+        return GW_ERR_IO;
+    }
+    return GW_OK;
+}
+
+static gw_status discover_bound_port(gw_http_server *server, gw_error *error)
+{
+    struct sockaddr_storage address;
+    socklen_t length = sizeof(address);
+
+    if (getsockname(server->listen_fd, (struct sockaddr *)&address, &length) < 0) {
+        set_error(error, GW_ERR_IO, "cannot read HTTP listener address: %s",
+                  strerror(errno));
+        return GW_ERR_IO;
+    }
+    if (address.ss_family == AF_INET) {
+        server->bound_port = ntohs(((struct sockaddr_in *)&address)->sin_port);
+    } else if (address.ss_family == AF_INET6) {
+        server->bound_port = ntohs(((struct sockaddr_in6 *)&address)->sin6_port);
+    } else {
+        set_error(error, GW_ERR_IO, "HTTP listener has an unsupported address family");
+        return GW_ERR_IO;
+    }
+    return GW_OK;
+}
+
+gw_status gw_http_server_start(gw_http_server *server, gw_error *error)
+{
+    gw_status status;
+    int result;
+
+    if (server == NULL) {
+        set_error(error, GW_ERR_ARGUMENT, "HTTP server is required");
+        return GW_ERR_ARGUMENT;
+    }
+    if (server->thread_started || server->listen_fd >= 0) {
+        set_error(error, GW_ERR_VALIDATION, "HTTP server is already started");
+        return GW_ERR_VALIDATION;
+    }
+    status = bind_listener(server, error);
+    if (status != GW_OK) {
+        return status;
+    }
+    status = discover_bound_port(server, error);
+    if (status != GW_OK) {
+        close(server->listen_fd);
+        server->listen_fd = -1;
+        return status;
+    }
+    atomic_store(&server->stop_requested, false);
+    result = pthread_create(&server->thread, NULL, run_server, server);
+    if (result != 0) {
+        close(server->listen_fd);
+        server->listen_fd = -1;
+        set_error(error, GW_ERR_IO, "cannot start HTTP server thread: %s",
+                  strerror(result));
+        return GW_ERR_IO;
+    }
+    server->thread_started = true;
+    clear_error(error);
+    return GW_OK;
+}
+
+uint16_t gw_http_server_port(const gw_http_server *server)
+{
+    return server != NULL ? server->bound_port : 0U;
+}
+
+void gw_http_server_stop(gw_http_server *server)
+{
+    if (server == NULL) {
+        return;
+    }
+    if (server->thread_started) {
+        atomic_store(&server->stop_requested, true);
+        pthread_join(server->thread, NULL);
+        server->thread_started = false;
+    }
+    if (server->listen_fd >= 0) {
+        close(server->listen_fd);
+        server->listen_fd = -1;
+    }
+}
+
+void gw_http_server_destroy(gw_http_server *server)
+{
+    if (server == NULL) {
+        return;
+    }
+    gw_http_server_stop(server);
+    free(server);
+}

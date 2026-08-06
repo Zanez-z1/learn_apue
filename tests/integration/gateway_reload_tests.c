@@ -15,6 +15,7 @@
 extern char **environ;
 
 static const char initial_config[] =
+    "server: {enabled: false}\n"
     "channels:\n"
     "  - id: cam01\n"
     "    input: {type: rtsp, url: 'rtsp://user:reload-password@camera/hold', transport: tcp}\n"
@@ -26,6 +27,7 @@ static const char initial_config[] =
     "    output: {path: cam02}\n";
 
 static const char changed_config[] =
+    "server: {enabled: false}\n"
     "channels:\n"
     "  - id: cam01\n"
     "    input: {type: rtsp, url: 'rtsp://user:reload-password@camera/hold', transport: tcp}\n"
@@ -41,6 +43,7 @@ static const char changed_config[] =
     "    output: {path: cam03}\n";
 
 static const char invalid_config[] =
+    "server: {enabled: false}\n"
     "channels:\n"
     "  - id: cam01\n"
     "    input: {type: rtsp, url: 'rtsp://user:reload-password@camera/hold', transport: tcp}\n"

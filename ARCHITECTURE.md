@@ -130,6 +130,7 @@ FFmpeg 工作进程启用 `-progress pipe:1`，由 `gatewayd` 解析 `frame`、`
 - 支持通过 `SIGHUP` 重新加载配置。
 - 比较新旧配置，只重启发生变化的通道。
 - 重载时先完成候选配置解析和校验；无效候选不得改变当前注册表或停止运行通道。
+- HTTP 监听地址、端口或启用状态变化需要重启进程，SIGHUP 不切换监听 socket。
 
 #### Channel Manager
 

@@ -36,6 +36,12 @@ gw_status gw_channel_manager_get_snapshot(gw_channel_manager *manager,
                                           gw_channel_snapshot *snapshot,
                                           gw_error *error);
 
+/* Copy every currently managed channel snapshot under one read lock. */
+gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
+                                            gw_channel_snapshot *snapshots,
+                                            size_t capacity, size_t *count,
+                                            gw_error *error);
+
 /* Thread-safe and idempotent; signal_number should normally be SIGINT/SIGTERM. */
 void gw_channel_manager_request_stop(gw_channel_manager *manager,
                                      int signal_number);

@@ -81,6 +81,11 @@ static void test_validation(void)
     config.defaults.stable_run_sec = 0;
     CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
     config.defaults.stable_run_sec = 60;
+    snprintf(config.server.listen, sizeof(config.server.listen), "%s",
+             "not-an-address");
+    CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
+    snprintf(config.server.listen, sizeof(config.server.listen), "%s",
+             "127.0.0.1");
     snprintf(config.channels[0].id, sizeof(config.channels[0].id), "%s", "bad/id");
     CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
 }
@@ -95,6 +100,7 @@ static void test_config_loader(void)
     snprintf(path, sizeof(path), "%s/config/gateway.example.yaml", GW_TEST_SOURCE_DIR);
     CHECK(gw_config_load_file(path, &config, &error) == GW_OK);
     CHECK(config.channel_count == 1U);
+    CHECK(config.server.enabled);
     CHECK(config.defaults.probe_timeout_sec == 10);
     CHECK(config.defaults.stable_run_sec == 60);
     CHECK(strcmp(config.channels[0].id, "cam01") == 0);
@@ -130,6 +136,8 @@ static void test_progress_parser(void)
     static const char first[] = "frame=125\nfps=24.98\nbitrate=4012.3kbits/s\nout_";
     static const char second[] =
         "time_us=5000000\ndrop_frames=2\nspeed=0.999x\nprogress=continue\n";
+    static const char non_finite[] =
+        "fps=nan\nspeed=infinity\nprogress=continue\n";
     gw_progress_parser parser;
     gw_worker_progress progress;
     gw_error error = {0};
@@ -149,6 +157,11 @@ static void test_progress_parser(void)
     CHECK(progress.drop_frames == 2U);
     CHECK(fabs(progress.speed - 0.999) < 0.001);
     CHECK(strcmp(progress.status, "continue") == 0);
+    CHECK(gw_progress_parser_consume(&parser, non_finite, strlen(non_finite),
+                                     &progress, &completed, &error) == GW_OK);
+    CHECK(completed);
+    CHECK(progress.fps == 0.0);
+    CHECK(progress.speed == 0.0);
 }
 
 int main(void)

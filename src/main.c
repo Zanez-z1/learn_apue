@@ -3,6 +3,7 @@
 
 #include "gateway/channel_manager.h"
 #include "gateway/config.h"
+#include "gateway/http_server.h"
 #include "gateway/pipeline_builder.h"
 #include "gateway/supervisor.h"
 
@@ -84,6 +85,7 @@ static int run_channels(const char *config_path, const gw_config *config,
 {
     const struct timespec poll_interval = {.tv_sec = 0, .tv_nsec = 100000000L};
     gw_channel_manager *manager = NULL;
+    gw_http_server *http_server = NULL;
     gw_error error = {0};
     gw_status status;
     int result;
@@ -101,6 +103,24 @@ static int run_channels(const char *config_path, const gw_config *config,
         gw_channel_manager_destroy(manager);
         return 1;
     }
+    if (config->server.enabled) {
+        status = gw_http_server_create(&http_server, &config->server, manager,
+                                       &error);
+        if (status == GW_OK) {
+            status = gw_http_server_start(http_server, &error);
+        }
+        if (status != GW_OK) {
+            fprintf(stderr, "HTTP server error (%s): %s\n",
+                    gw_status_string(status), error.message);
+            gw_http_server_destroy(http_server);
+            gw_channel_manager_request_stop(manager, SIGTERM);
+            gw_channel_manager_wait(manager);
+            gw_channel_manager_destroy(manager);
+            return 1;
+        }
+        printf("HTTP listening on %s:%u\n", config->server.listen,
+               (unsigned int)gw_http_server_port(http_server));
+    }
     while (!gw_channel_manager_is_finished(manager)) {
         if (stop_signal != 0) {
             gw_channel_manager_request_stop(manager, (int)stop_signal);
@@ -113,6 +133,13 @@ static int run_channels(const char *config_path, const gw_config *config,
             if (status != GW_OK) {
                 fprintf(stderr, "Configuration reload rejected (%s): %s\n",
                         gw_status_string(status), error.message);
+            } else if (candidate.server.enabled != config->server.enabled ||
+                       strcmp(candidate.server.listen, config->server.listen) !=
+                           0 ||
+                       candidate.server.port != config->server.port) {
+                fprintf(stderr,
+                        "Configuration reload rejected: server.listen/port "
+                        "changes require a process restart\n");
             } else {
                 status = gw_channel_manager_reload(manager, &candidate, &summary,
                                                    &error);
@@ -130,7 +157,9 @@ static int run_channels(const char *config_path, const gw_config *config,
         }
         nanosleep(&poll_interval, NULL);
     }
+    gw_http_server_stop(http_server);
     result = gw_channel_manager_wait(manager);
+    gw_http_server_destroy(http_server);
     gw_channel_manager_destroy(manager);
     return result;
 }

@@ -13,6 +13,7 @@ find_package(Threads REQUIRED)
 pkg_check_modules(LIBYAML REQUIRED IMPORTED_TARGET yaml-0.1)
 
 add_library(gateway_core
+    src/api/http_server.c
     src/channel/channel_manager.c
     src/channel/channel_snapshot.c
     src/channel/channel_state.c
@@ -69,6 +70,13 @@ if(GATEWAY_BUILD_TESTS)
     add_test(NAME gateway_probe_tests COMMAND gateway_probe_tests)
     set_tests_properties(gateway_probe_tests PROPERTIES TIMEOUT 5)
 
+    add_executable(gateway_http_server_tests tests/unit/http_server_tests.c)
+    target_link_libraries(gateway_http_server_tests PRIVATE gateway_core)
+    target_compile_options(gateway_http_server_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_http_server_tests COMMAND gateway_http_server_tests)
+    set_tests_properties(gateway_http_server_tests PROPERTIES TIMEOUT 5)
+
     add_executable(gateway_process_fixture tests/integration/process_fixture.c)
     target_compile_options(gateway_process_fixture PRIVATE
         -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
@@ -101,6 +109,17 @@ if(GATEWAY_BUILD_TESTS)
         COMMAND gateway_reload_tests $<TARGET_FILE:gatewayd>
                 $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_reload_tests PROPERTIES TIMEOUT 15)
+
+    add_executable(gateway_http_tests
+        tests/integration/gateway_http_tests.c)
+    target_compile_options(gateway_http_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_http_tests
+        COMMAND gateway_http_tests $<TARGET_FILE:gatewayd>
+                $<TARGET_FILE:gateway_process_fixture>)
+    set_tests_properties(gateway_http_tests PROPERTIES
+        TIMEOUT 15
+        FAIL_REGULAR_EXPRESSION "http-password")
 
     add_executable(gateway_recovery_tests
         tests/integration/input_recovery_tests.c)

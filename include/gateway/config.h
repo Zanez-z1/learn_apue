@@ -33,6 +33,7 @@ typedef struct {
 } gw_error;
 
 typedef struct {
+    bool enabled;
     char listen[64];
     uint16_t port;
 } gw_server_config;

@@ -2,6 +2,7 @@
 #include "gateway/progress_parser.h"
 
 #include <errno.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,7 +63,8 @@ static bool parse_double_value(const char *value, double *output)
 
     errno = 0;
     parsed = strtod(value, &end);
-    if (errno != 0 || end == value || (*end != '\0' && strcmp(end, "x") != 0)) {
+    if (errno != 0 || end == value || !isfinite(parsed) ||
+        (*end != '\0' && strcmp(end, "x") != 0)) {
         return false;
     }
     *output = parsed;

@@ -22,6 +22,7 @@ add_library(gateway_core
     src/config/mediamtx_config.c
     src/pipeline/pipeline_builder.c
     src/monitor/progress_parser.c
+    src/monitor/recording_status.c
     src/process/process_manager.c
     src/probe/probe.c
 )
@@ -86,6 +87,15 @@ if(GATEWAY_BUILD_TESTS)
     add_test(NAME gateway_mediamtx_config_tests
         COMMAND gateway_mediamtx_config_tests)
     set_tests_properties(gateway_mediamtx_config_tests PROPERTIES TIMEOUT 5)
+
+    add_executable(gateway_recording_status_tests
+        tests/unit/recording_status_tests.c)
+    target_link_libraries(gateway_recording_status_tests PRIVATE gateway_core)
+    target_compile_options(gateway_recording_status_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_recording_status_tests
+        COMMAND gateway_recording_status_tests)
+    set_tests_properties(gateway_recording_status_tests PROPERTIES TIMEOUT 5)
 
     add_test(NAME gateway_mediamtx_cli_test
         COMMAND ${CMAKE_COMMAND}

@@ -18,9 +18,10 @@ RTSP、WebRTC 和 HLS 分发。
 - 多个启用通道并行运行，一个通道失败不会停止其他通道。
 - 支持通过 SIGHUP 重新读取配置，只新增、删除或重启发生变化的通道。
 - 提供本地 HTTP 健康检查、通道状态查询和启动/停止/重启控制。
+- 提供录像文件系统容量、最低空闲阈值和降级状态查询。
 - RK3588 媒体环境检查脚本。
 
-录像配置生成和自动保留策略已经实现；磁盘状态接口、systemd 部署和真实录像验收
+录像配置生成、自动保留策略和磁盘状态接口已经实现；systemd 部署和真实录像验收
 尚未完成，也尚未通过 RK3588 真实媒体链路验收，
 不能将当前版本作为完整网关服务部署。
 
@@ -70,6 +71,7 @@ IPv6 地址；如不需要控制面，可设置 `server.enabled: false`。
 curl http://127.0.0.1:9080/v1/health
 curl http://127.0.0.1:9080/v1/channels
 curl http://127.0.0.1:9080/v1/channels/cam01
+curl http://127.0.0.1:9080/v1/recording
 curl -X POST http://127.0.0.1:9080/v1/channels/cam01/stop
 curl -X POST http://127.0.0.1:9080/v1/channels/cam01/start
 curl -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
@@ -98,6 +100,9 @@ mediamtx mediamtx.generated.yml
 生成内容不会包含输入 URL 或密码。示例 [config/mediamtx.example.yml](config/mediamtx.example.yml)
 启用 fMP4 录像、按通道分目录、7 天自动删除和仅回环回放。修改录像参数后需要重新生成
 MediaMTX 配置并重载或重启 MediaMTX；向 `gatewayd` 发送 SIGHUP 不会修改外部服务。
+`GET /v1/recording` 返回录像文件系统总量、当前用户可用量、阈值和
+`ok`/`low_space`/`unavailable` 状态；目录本身不会暴露在 API 中。空间不足时健康检查
+变为 `degraded`，自动删除仍由 MediaMTX 的 `recordDeleteAfter` 执行。
 
 ## 板卡环境检查
 

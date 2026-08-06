@@ -3,6 +3,7 @@
 #include "gateway/http_server.h"
 #include "gateway/supervisor.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -57,17 +58,23 @@ static gw_channel_manager *make_manager(void)
 static void test_read_only_routes(void)
 {
     gw_channel_manager *manager = make_manager();
+    gw_config route_config;
+    gw_recording_config recording;
     gw_http_response response;
     gw_error error = {0};
 
+    gw_config_init(&route_config);
+    recording = route_config.mediamtx.recording;
     CHECK(manager != NULL);
-    CHECK(gw_http_route(manager, "GET", "/v1/health", &response, &error) ==
+    CHECK(gw_http_route(manager, &recording, "GET", "/v1/health", &response,
+                        &error) ==
           GW_OK);
     CHECK(response.status_code == 200);
     CHECK(strstr(response.body, "\"status\":\"ok\"") != NULL);
     CHECK(strstr(response.body, "\"channel_count\":2") != NULL);
 
-    CHECK(gw_http_route(manager, "GET", "/v1/channels", &response, &error) ==
+    CHECK(gw_http_route(manager, &recording, "GET", "/v1/channels", &response,
+                        &error) ==
           GW_OK);
     CHECK(response.status_code == 200);
     CHECK(strstr(response.body, "\"id\":\"cam01\"") != NULL);
@@ -75,41 +82,55 @@ static void test_read_only_routes(void)
     CHECK(strstr(response.body, "unit-password") == NULL);
     CHECK(strstr(response.body, "rtsp://") == NULL);
 
-    CHECK(gw_http_route(manager, "GET", "/v1/channels/cam02", &response,
-                        &error) == GW_OK);
+    CHECK(gw_http_route(manager, &recording, "GET", "/v1/channels/cam02",
+                        &response, &error) == GW_OK);
     CHECK(response.status_code == 200);
     CHECK(strstr(response.body, "\"id\":\"cam02\"") != NULL);
     CHECK(strstr(response.body, "\"state\":\"STOPPED\"") != NULL);
 
-    CHECK(gw_http_route(manager, "GET", "/v1/channels/missing", &response,
-                        &error) == GW_OK);
+    CHECK(gw_http_route(manager, &recording, "GET", "/v1/channels/missing",
+                        &response, &error) == GW_OK);
     CHECK(response.status_code == 404);
     CHECK(strstr(response.body, "\"error\":\"not_found\"") != NULL);
 
-    CHECK(gw_http_route(manager, "POST", "/v1/channels/cam01", &response,
-                        &error) == GW_OK);
+    CHECK(gw_http_route(manager, &recording, "POST", "/v1/channels/cam01",
+                        &response, &error) == GW_OK);
     CHECK(response.status_code == 405);
     CHECK(response.allow_get);
     CHECK(!response.allow_post);
-    CHECK(gw_http_route(manager, "POST", "/v1/health", &response, &error) ==
-          GW_OK);
+    CHECK(gw_http_route(manager, &recording, "POST", "/v1/health", &response,
+                        &error) == GW_OK);
     CHECK(response.status_code == 405);
     CHECK(response.allow_get);
-    CHECK(gw_http_route(manager, "GET", "/v1/channels/cam01/start", &response,
-                        &error) == GW_OK);
+    CHECK(gw_http_route(manager, &recording, "GET",
+                        "/v1/channels/cam01/start", &response, &error) == GW_OK);
     CHECK(response.status_code == 405);
     CHECK(!response.allow_get);
     CHECK(response.allow_post);
-    CHECK(gw_http_route(manager, "POST", "/v1/channels/cam01/start", &response,
-                        &error) == GW_OK);
+    CHECK(gw_http_route(manager, &recording, "POST",
+                        "/v1/channels/cam01/start", &response, &error) == GW_OK);
     CHECK(response.status_code == 409);
     CHECK(strstr(response.body, "\"error\":\"state_conflict\"") != NULL);
-    CHECK(gw_http_route(manager, "POST", "/v1/channels/missing/start", &response,
-                        &error) == GW_OK);
+    CHECK(gw_http_route(manager, &recording, "POST",
+                        "/v1/channels/missing/start", &response, &error) == GW_OK);
     CHECK(response.status_code == 409);
-    CHECK(gw_http_route(manager, "GET", "/v1/channels/cam01/extra", &response,
-                        &error) == GW_OK);
+    CHECK(gw_http_route(manager, &recording, "GET",
+                        "/v1/channels/cam01/extra", &response, &error) == GW_OK);
     CHECK(response.status_code == 404);
+
+    recording.enabled = true;
+    snprintf(recording.directory, sizeof(recording.directory), "%s", "/tmp");
+    recording.min_free_mb = INT_MAX;
+    CHECK(gw_http_route(manager, &recording, "GET", "/v1/recording", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 200);
+    CHECK(strstr(response.body, "\"status\":\"low_space\"") != NULL);
+    CHECK(strstr(response.body, "\"filesystem_available\":true") != NULL);
+    CHECK(strstr(response.body, recording.directory) == NULL);
+    CHECK(gw_http_route(manager, &recording, "POST", "/v1/recording", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 405);
+    CHECK(response.allow_get);
     gw_channel_manager_destroy(manager);
 }
 

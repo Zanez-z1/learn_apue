@@ -18,6 +18,8 @@ extern char **environ;
 
 static const char config_text[] =
     "server: {enabled: true, listen: 127.0.0.1, port: 0}\n"
+    "mediamtx:\n"
+    "  recording: {enabled: true, directory: /tmp, min_free_mb: 2147483647}\n"
     "defaults: {probe_timeout_sec: 1, startup_timeout_sec: 1, "
     "progress_timeout_sec: 5, stable_run_sec: 5, stop_timeout_sec: 1, "
     "max_retries: 1, max_backoff_sec: 1}\n"
@@ -253,6 +255,11 @@ int main(int argc, char **argv)
 
     if (expect_response(port, "GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n",
                         "HTTP/1.1 200 OK", "\"channel_count\":1") < 0 ||
+        expect_response(port, "GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                        "HTTP/1.1 200 OK", "\"recording\":\"low_space\"") < 0 ||
+        expect_response(port,
+                        "GET /v1/recording HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                        "HTTP/1.1 200 OK", "\"status\":\"low_space\"") < 0 ||
         expect_response(port,
                         "GET /v1/channels HTTP/1.1\r\nHost: localhost\r\n\r\n",
                         "HTTP/1.1 200 OK", "\"id\":\"cam01\"") < 0 ||

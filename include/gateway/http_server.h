@@ -5,6 +5,7 @@
 
 #include "gateway/channel_manager.h"
 #include "gateway/config.h"
+#include "gateway/recording_status.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,13 +24,15 @@ typedef struct {
 } gw_http_response;
 
 /* Router used by the socket server and unit tests. Control routes mutate manager state. */
-gw_status gw_http_route(gw_channel_manager *manager, const char *method,
-                        const char *target, gw_http_response *response,
-                        gw_error *error);
+gw_status gw_http_route(gw_channel_manager *manager,
+                        const gw_recording_config *recording,
+                        const char *method, const char *target,
+                        gw_http_response *response, gw_error *error);
 
 /* The manager is borrowed and must outlive the server. */
 gw_status gw_http_server_create(gw_http_server **server,
                                 const gw_server_config *config,
+                                const gw_recording_config *recording,
                                 gw_channel_manager *manager, gw_error *error);
 
 gw_status gw_http_server_start(gw_http_server *server, gw_error *error);

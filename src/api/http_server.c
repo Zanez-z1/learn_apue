@@ -30,6 +30,7 @@ typedef struct {
 
 struct gw_http_server {
     gw_server_config config;
+    gw_recording_config recording;
     gw_channel_manager *manager;
     int listen_fd;
     uint16_t bound_port;
@@ -247,9 +248,10 @@ static gw_status method_not_allowed(gw_http_response *response, bool allow_get,
                           "method is not allowed for this route", error);
 }
 
-gw_status gw_http_route(gw_channel_manager *manager, const char *method,
-                        const char *target, gw_http_response *response,
-                        gw_error *error)
+gw_status gw_http_route(gw_channel_manager *manager,
+                        const gw_recording_config *recording,
+                        const char *method, const char *target,
+                        gw_http_response *response, gw_error *error)
 {
     gw_channel_snapshot snapshots[GW_MAX_CHANNELS];
     gw_channel_snapshot snapshot;
@@ -260,9 +262,10 @@ gw_status gw_http_route(gw_channel_manager *manager, const char *method,
     char channel_id[GW_ID_CAP];
     const char *action;
 
-    if (manager == NULL || method == NULL || target == NULL || response == NULL) {
+    if (manager == NULL || recording == NULL || method == NULL || target == NULL ||
+        response == NULL) {
         set_error(error, GW_ERR_ARGUMENT,
-                  "manager, method, target, and response are required");
+                  "manager, recording, method, target, and response are required");
         return GW_ERR_ARGUMENT;
     }
     memset(response, 0, sizeof(*response));
@@ -275,6 +278,7 @@ gw_status gw_http_route(gw_channel_manager *manager, const char *method,
     if (strcmp(target, "/v1/health") == 0) {
         size_t running = 0U;
         size_t failed = 0U;
+        gw_recording_snapshot recording_snapshot;
 
         if (strcmp(method, "GET") != 0) {
             return method_not_allowed(response, true, false, error);
@@ -284,13 +288,51 @@ gw_status gw_http_route(gw_channel_manager *manager, const char *method,
         if (status != GW_OK) {
             return status;
         }
+        status = gw_recording_snapshot_read(recording, &recording_snapshot,
+                                            error);
+        if (status != GW_OK) {
+            return status;
+        }
         for (index = 0U; index < count; ++index) {
             running += snapshots[index].state == GW_CHANNEL_RUNNING ? 1U : 0U;
             failed += snapshots[index].state == GW_CHANNEL_FAILED ? 1U : 0U;
         }
-        json_append(&writer, "{\"status\":\"%s\",\"channel_count\":%zu,"
-                             "\"running\":%zu,\"failed\":%zu}\n",
-                    failed == 0U ? "ok" : "degraded", count, running, failed);
+        json_append(&writer,
+                    "{\"status\":\"%s\",\"channel_count\":%zu,"
+                    "\"running\":%zu,\"failed\":%zu,\"recording\":",
+                    failed == 0U && recording_snapshot.state !=
+                                            GW_RECORDING_LOW_SPACE &&
+                            recording_snapshot.state != GW_RECORDING_UNAVAILABLE
+                        ? "ok"
+                        : "degraded",
+                    count, running, failed);
+        json_string(&writer,
+                    gw_recording_state_string(recording_snapshot.state));
+        json_append(&writer, "}\n");
+        return finish_response(response, &writer, error);
+    }
+    if (strcmp(target, "/v1/recording") == 0) {
+        gw_recording_snapshot recording_snapshot;
+
+        if (strcmp(method, "GET") != 0) {
+            return method_not_allowed(response, true, false, error);
+        }
+        status = gw_recording_snapshot_read(recording, &recording_snapshot,
+                                            error);
+        if (status != GW_OK) {
+            return status;
+        }
+        json_append(&writer, "{\"enabled\":%s,\"status\":",
+                    recording_snapshot.enabled ? "true" : "false");
+        json_string(&writer,
+                    gw_recording_state_string(recording_snapshot.state));
+        json_append(&writer,
+                    ",\"filesystem_available\":%s,\"total_bytes\":%llu,"
+                    "\"available_bytes\":%llu,\"min_free_bytes\":%llu}\n",
+                    recording_snapshot.filesystem_available ? "true" : "false",
+                    (unsigned long long)recording_snapshot.total_bytes,
+                    (unsigned long long)recording_snapshot.available_bytes,
+                    (unsigned long long)recording_snapshot.min_free_bytes);
         return finish_response(response, &writer, error);
     }
     if (strcmp(target, "/v1/channels") == 0) {
@@ -498,7 +540,8 @@ static void handle_connection(gw_http_server *server, int descriptor)
         respond_error(descriptor, 400, "bad_request", "invalid request line");
         return;
     }
-    if (gw_http_route(server->manager, method, target, &response, &error) != GW_OK) {
+    if (gw_http_route(server->manager, &server->recording, method, target,
+                      &response, &error) != GW_OK) {
         respond_error(descriptor, 500, "internal_error",
                       "cannot build HTTP response");
         return;
@@ -535,13 +578,15 @@ static void *run_server(void *context)
 
 gw_status gw_http_server_create(gw_http_server **server_output,
                                 const gw_server_config *config,
+                                const gw_recording_config *recording,
                                 gw_channel_manager *manager, gw_error *error)
 {
     gw_http_server *server;
 
-    if (server_output == NULL || config == NULL || manager == NULL) {
+    if (server_output == NULL || config == NULL || recording == NULL ||
+        manager == NULL) {
         set_error(error, GW_ERR_ARGUMENT,
-                  "server output, configuration, and manager are required");
+                  "server output, configuration, recording, and manager are required");
         return GW_ERR_ARGUMENT;
     }
     *server_output = NULL;
@@ -551,6 +596,7 @@ gw_status gw_http_server_create(gw_http_server **server_output,
         return GW_ERR_NO_MEMORY;
     }
     server->config = *config;
+    server->recording = *recording;
     server->manager = manager;
     server->listen_fd = -1;
     atomic_init(&server->stop_requested, false);

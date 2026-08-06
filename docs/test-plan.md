@@ -839,6 +839,40 @@ ASan/UBSan：24/24 PASS（LeakSanitizer 因 ptrace 环境关闭）
 限制：未启动 MediaMTX，未生成真实录像分段，未验证真实回放或自动删除
 ```
 
+### 7.4 录像磁盘状态开发机验收
+
+执行：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(recording_status|http_server|http)_tests'
+```
+
+覆盖：
+
+- 录像关闭时返回 `disabled`，不访问目录。
+- 对 `/tmp` 使用 `statvfs()` 取得非零总容量和当前用户可用容量。
+- 将 `min_free_mb` 提高到开发机容量以上时稳定得到 `low_space`。
+- 不存在的目录返回 `unavailable` 快照，不把操作系统路径或错误内容写入 HTTP。
+- `GET /v1/recording` 返回容量和阈值；POST 返回 405 与 `Allow: GET`。
+- 低空间时 `/v1/health` 为 `degraded` 且 `recording` 为 `low_space`。
+- API 和日志继续检查不得出现输入 URL 或测试密码。
+
+本增量验收记录：
+
+```text
+日期：2026-08-06
+测试机器：x86_64 开发机
+相关常规 CTest：3/3 PASS
+完整常规 CTest：25/25 PASS
+ASan/UBSan：25/25 PASS（LeakSanitizer 因 ptrace 环境关闭）
+TSan：录像状态/HTTP/通道管理器/重载相关 5/5 PASS
+测试目录：/tmp（仅 statvfs 查询，无文件创建或删除）
+结果：PASS（开发机容量状态与 HTTP 降级路径）
+限制：未制造真实磁盘写满，未启动 MediaMTX，未验证自动删除是否释放空间
+```
+
 功能完成后，本节需要覆盖：
 
 - API 默认只监听回环地址。

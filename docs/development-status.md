@@ -53,9 +53,9 @@ Phase 3 的开发机路径已完成，RK3588 真实媒体链路验收仍为 `PEN
 日期：2026-08-06
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：24/24 PASS
-ASan/UBSan：24/24 PASS
-TSan（HTTP/通道管理器/重载相关）：4/4 PASS
+常规 CTest：25/25 PASS
+ASan/UBSan：25/25 PASS
+TSan（录像状态/HTTP/通道管理器/重载相关）：5/5 PASS
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 ```
@@ -206,7 +206,7 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
   SIGTERM 和敏感信息边界。
 - HTTP 当前没有身份认证；默认回环监听是安全边界，不得直接暴露到不受信任网络。
 
-### 本次增量：MediaMTX 录像配置生成
+### 1e4d881：MediaMTX 录像配置生成
 
 - `mediamtx.recording` 新增录像启用、绝对目录、fMP4/MPEG-TS 格式、part 大小与周期、
   segment 周期、自动删除周期、最低空闲空间阈值和回放监听配置。
@@ -217,6 +217,19 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
   明确失败。提供与当前 MediaMTX v1.20 配置字段一致的示例文件。
 - MediaMTX 仍是独立服务，gatewayd 不创建、重载或伪造其运行结果。录像参数变化需要
   重新生成配置并由部署流程重载 MediaMTX。
+
+### 本次增量：录像磁盘状态管理
+
+- 新增纯 `statvfs()` 录像状态模块，按当前服务用户可用块计算总容量与可用容量，不扫描
+  录像文件，也不接触 MediaMTX 正在写入的分段。
+- 新增 `GET /v1/recording`，返回启用状态、`disabled`/`ok`/`low_space`/
+  `unavailable`、容量和最低空闲阈值；不暴露服务器目录路径。
+- 录像启用且空间低于 `min_free_mb`，或录像目录不可访问时，`GET /v1/health` 返回
+  `degraded` 并给出录像状态；通道实时转码不会因此被停止。
+- 空间回收由已生成的 MediaMTX `recordDeleteAfter` 策略负责。gatewayd 不直接删除录像
+  文件，避免与 MediaMTX 写入竞争或产生路径穿越风险。
+- 单元测试覆盖关闭、正常、低空间、目录不可用和参数错误；HTTP 单元与真实回环测试
+  覆盖 JSON、健康降级、GET-only、目录隐藏和密码边界。
 
 ## 5. 当前能力边界
 
@@ -236,15 +249,14 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 
 - RK3588 板卡上的真实 RTSP/ffprobe 与 MPP/RGA 联调。
 - 真实 MediaMTX 发布端停止、恢复与重新发布联调。
-- 录像磁盘状态/阈值管理、systemd 部署。
+- systemd 部署。
 - RK3588 真实硬件转码与稳定性/性能数据。
 
 ## 6. 下一步队列
 
 按顺序执行：
 
-1. 增加录像目录磁盘状态和阈值管理能力。
-2. 增加 systemd 服务、环境文件和开发机服务化验收。
+1. 增加 systemd 服务、环境文件和开发机服务化验收。
 
 ## 7. 文档职责
 

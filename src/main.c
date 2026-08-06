@@ -141,7 +141,8 @@ static int run_channels(const char *config_path, const gw_config *config,
         return 1;
     }
     if (config->server.enabled) {
-        status = gw_http_server_create(&http_server, &config->server, manager,
+        status = gw_http_server_create(&http_server, &config->server,
+                                       &config->mediamtx.recording, manager,
                                        &error);
         if (status == GW_OK) {
             status = gw_http_server_start(http_server, &error);

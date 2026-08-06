@@ -356,6 +356,9 @@ Phase 0：PASS
   允许回环监听的同机环境复跑通过；没有把沙箱失败算作功能通过。
 - 板卡仍运行修复前二进制，下一步必须同步源码、构建，并重新执行真实断流恢复；只有观察到
   `worker_failure -> BACKOFF -> PROBING -> RUNNING` 和新 FFmpeg PID 后才可标记通过。
+- 修复首次在板卡 GCC 上构建时，编译器对受 `received_progress` 短路保护的
+  `running_since` 给出可能未初始化警告；显式零初始化消除该跨编译器告警，不改变稳定窗口
+  语义。板卡用户级 CTest 在修复源码上为 26/26 PASS。
 
 ## 5. 当前能力边界
 

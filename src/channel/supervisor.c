@@ -475,7 +475,7 @@ static worker_attempt_result run_worker_attempt(
     bool exited = false;
     struct timespec started_at;
     struct timespec last_progress_at;
-    struct timespec running_since;
+    struct timespec running_since = {0};
     gw_status status;
 
     /* This function owns argv, child process, and pipes for exactly one attempt. */

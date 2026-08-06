@@ -687,7 +687,12 @@ ctest --test-dir build --output-on-failure \
 
 2026-08-06 首次 RK3588 单路实测记录：PC 摄像头源停止后，修复前二进制的 FFmpeg 在
 87.44 秒进度处以 0 退出，通道错误进入 `STOPPED/clean_exit`。该次结果为 `FAIL`，是修复
-触发证据，不得作为恢复通过记录。修复后的板卡复测仍为 `PENDING`。
+触发证据，不得作为恢复通过记录。
+
+修复后复测：`PASS`。第二次停止 PC 摄像头源后，旧工作 PID 755974 的 FFmpeg 同样因
+EOF 以 0 退出，通道记录 `worker_failure`，随后依次使用 1、2、4、8、16、30 秒退避并
+探测输入。恢复源后通道以新 PID 762652 回到 `RUNNING`，输出重新可读；60 秒稳定窗口后
+`consecutive_failures` 从 7 清零，`total_restarts` 保留为 7。
 
 #### 6.4.2 工作进程崩溃与恢复
 
@@ -776,6 +781,26 @@ SIGHUP 未变化通道不中断：PENDING
 SIGTERM 与资源清理：PENDING
 原始日志路径：
 遗留问题：
+```
+
+2026-08-06 RK3588 单路真实故障记录：
+
+```text
+提交：25e1a3f、d4a8b77
+板卡：aarch64 LubanCat，Debian 11，Linux 5.10.160
+输入：PC 集成摄像头，经 PC MediaMTX 提供 H.264 1920x1080 RTSP
+基线播放：PASS；板卡本地与 PC 跨主机均可读取，平均 25fps
+输入 EOF/退出码 0：PASS；BACKOFF 后恢复为新 PID 762652，稳定窗口后失败计数清零
+工作进程 SIGKILL：PASS；PID 762652 -> exit 137/BACKOFF -> PID 767868/RUNNING
+MediaMTX 停止：PASS；PID 692980 消失期间 gatewayd 存活且没有代为启动 MediaMTX
+MediaMTX 恢复：PASS；新 PID 770462，gateway 工作 PID 770861 恢复发布
+录像恢复：PASS；继续产生非空 MP4，回放 API 返回恢复后的新时间段
+WebRTC 恢复：PASS；MediaMTX 记录来自 PC 的会话建立并读取 cam01 H.264
+音轨：无；当前链路使用 -an，本项只验收视频恢复
+多通道互不影响：开发机夹具 PASS；本次实机只有一个真实输入，未伪造双路结果
+SIGHUP 差异化重载：本轮未重复，PENDING
+SIGTERM 与 systemd 资源清理：PENDING，归入下一 systemd 增量
+原始日志：/home/cat/rk3588-acceptance/2026-08-06/phase3-*.log
 ```
 
 完整 Phase 3 需要覆盖：

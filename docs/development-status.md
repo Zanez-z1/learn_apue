@@ -340,7 +340,7 @@ Phase 0：PASS
 - 当前录像只有 H.264 视频轨，音频因 pipeline 的 `-an` 未进入发布流。真实证据保存在
   板卡仓库外，Phase 4 仍等待故障恢复和 systemd 实机验收。
 
-### 本次增量：常驻工作进程零退出恢复修复
+### 25e1a3f / d4a8b77：常驻工作进程零退出恢复修复
 
 - 在真实 PC 摄像头断流验收中，FFmpeg 读取上游 EOF 后以退出码 0 结束；旧逻辑把它记为
   `clean_exit` 并将通道停在 `STOPPED`，因此没有执行既定的退避和重新探测。这是实机发现
@@ -354,11 +354,30 @@ Phase 0：PASS
 - 本增量完整常规 CTest 26/26、ASan/UBSan 26/26、适用 TSan 7/7 PASS。TSan HTTP 首次
   在受限沙箱中因禁止绑定回环临时端口失败，取得明确 `Operation not permitted` 日志后在
   允许回环监听的同机环境复跑通过；没有把沙箱失败算作功能通过。
-- 板卡仍运行修复前二进制，下一步必须同步源码、构建，并重新执行真实断流恢复；只有观察到
-  `worker_failure -> BACKOFF -> PROBING -> RUNNING` 和新 FFmpeg PID 后才可标记通过。
+- 修复源码已同步到板卡并完成 Release 重建；板卡完整 CTest 26/26 PASS。真实断流复测结果
+  记录在下一增量，不以开发机测试替代实机结果。
 - 修复首次在板卡 GCC 上构建时，编译器对受 `received_progress` 短路保护的
   `running_since` 给出可能未初始化警告；显式零初始化消除该跨编译器告警，不改变稳定窗口
   语义。板卡用户级 CTest 在修复源码上为 26/26 PASS。
+
+### 本次增量：RK3588 故障恢复验收
+
+- 修复后二次停止 PC 摄像头推流，板卡 FFmpeg 在上游 EOF 后仍以 0 退出，但通道正确记录
+  `worker_failure -> BACKOFF`；输入离线期间探测失败，退避按 1、2、4、8、16、30 秒封顶。
+  恢复 PC 摄像头后重新探测成功，新工作 PID 762652 回到 `RUNNING`；60 秒稳定窗口后连续
+  失败计数从 7 清零，累计重启数保留。
+- 精确向 PID 762652 发送 SIGKILL 后，通道记录退出码 137 和 1 秒退避，经探测后以新 PID
+  767868 恢复 `RUNNING`。没有使用宽泛的 `pkill`，gatewayd 与 MediaMTX 未被误停。
+- 精确停止 MediaMTX PID 692980 后，gatewayd 保持运行且没有代为启动 MediaMTX；FFmpeg
+  因 broken pipe 以 224 退出，并在 MediaMTX 离线期间持续有限退避。使用同一录像配置恢复
+  MediaMTX 为 PID 770462 后，gatewayd 以新工作 PID 770861 重新发布。
+- 恢复后板卡本地探测为 H.264 1920×1080@25，PC 跨主机探测的平均帧率为 25fps；录像目录
+  继续生成非空 MP4，回放 API 返回新的时间段。MediaMTX 日志还记录来自 PC 的 WebRTC 会话
+  重新建立并读取单路 H.264。
+- 原始证据位于板卡仓库外的 `phase3-fault-recovery.log`、
+  `phase3-input-disconnect-fixed.log`、`phase3-input-recovery-fixed.log`、
+  `phase3-worker-crash-recovery.log` 和 `phase3-mediamtx-stop-recovery.log`。Phase 4 下一项为
+  systemd 非 root 服务生命周期验收。
 
 ## 5. 当前能力边界
 
@@ -375,23 +394,22 @@ Phase 0：PASS
 - MediaMTX 录像配置生成、自动保留参数和录像文件系统健康状态。
 - gatewayd/MediaMTX systemd 单元、非 root 权限边界与部署文档。
 - 开发机假工作进程端到端验证。
+- RK3588 上的真实 PC 摄像头 RTSP、MPP/RGA 转码、RTSP/WebRTC 播放与 HTTP 控制。
+- MediaMTX 真实录像、回放、自动删除、低空间状态和停止后重新发布恢复。
+- 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的有限退避及自动恢复。
 
 尚未具备：
 
-- RK3588 板卡上的真实 RTSP/ffprobe 与 MPP/RGA 联调。
-- 真实 MediaMTX 发布端停止、恢复与重新发布联调。
-- 真实 MediaMTX 录像、回放、自动删除与磁盘阈值联调。
 - systemd 开机启动、正常停止、崩溃恢复和设备权限验收。
-- RK3588 真实硬件转码与稳定性/性能数据。
+- RK3588 30 分钟最终稳定运行和 Phase 5 完整性能数据。
 
 ## 6. 下一步队列
 
 按顺序执行：
 
-1. 在 RK3588 板卡安装 MediaMTX 和生成配置，验证真实发布、录像与回放。
-2. 验证自动删除、低磁盘空间状态和服务账号对设备/录像目录的权限。
-3. 执行 systemd enable、重启、正常停止和崩溃自动恢复验收并保存日志。
-4. 板卡验收通过后更新 Phase 4 状态，再进入 Phase 5 性能与稳定性测试。
+1. 安装并执行 systemd enable、开机启动、正常停止、设备权限和崩溃恢复验收。
+2. 在服务化链路上完成 30 分钟最终稳定运行、资源与残留进程检查。
+3. 依次执行最终常规、ASan/UBSan 和适用 TSan，更新 Phase 4 状态；暂不进入 Phase 5。
 
 ## 7. 文档职责
 

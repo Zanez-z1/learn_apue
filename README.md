@@ -130,3 +130,19 @@ sudo cmake --install build
 脚本会检查架构、MPP/RGA/DRM 设备权限、Rockchip 编解码器、RGA 滤镜和
 MediaMTX。完整设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，可重复执行的分阶段
 测试步骤和验收记录见 [docs/test-plan.md](docs/test-plan.md)。
+
+## 运行指标采样
+
+`gateway-metrics` 可同时采样多个 Linux 进程并将 CPU、RSS 和文件描述符数输出为 CSV：
+
+```bash
+gateway-metrics \
+  --target gateway=1234 \
+  --target ffmpeg=1235 \
+  --target mediamtx=1236 \
+  --duration-sec 5 \
+  --interval-ms 1000 > metrics.csv
+```
+
+PID 需替换为当前实际进程。详细口径、FPS/丢帧配套采集方式和性能结果见
+[docs/benchmark-results.md](docs/benchmark-results.md)。

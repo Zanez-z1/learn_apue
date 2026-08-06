@@ -35,7 +35,17 @@ add_executable(gatewayd src/main.c)
 target_link_libraries(gatewayd PRIVATE gateway_core)
 target_compile_options(gatewayd PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 
-install(TARGETS gatewayd RUNTIME DESTINATION bin)
+add_library(gateway_metrics_core src/monitor/process_metrics.c)
+target_include_directories(gateway_metrics_core PUBLIC include)
+target_compile_options(gateway_metrics_core PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+
+add_executable(gateway-metrics src/tools/gateway_metrics.c)
+target_link_libraries(gateway-metrics PRIVATE gateway_metrics_core)
+target_compile_options(gateway-metrics PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+
+install(TARGETS gatewayd gateway-metrics RUNTIME DESTINATION bin)
 install(FILES config/gateway.example.yaml config/mediamtx.example.yml
         DESTINATION share/rk-media-gateway)
 install(FILES
@@ -106,6 +116,23 @@ if(GATEWAY_BUILD_TESTS)
     add_test(NAME gateway_recording_status_tests
         COMMAND gateway_recording_status_tests)
     set_tests_properties(gateway_recording_status_tests PROPERTIES TIMEOUT 5)
+
+    add_executable(gateway_process_metrics_tests
+        tests/unit/process_metrics_tests.c)
+    target_link_libraries(gateway_process_metrics_tests PRIVATE gateway_metrics_core)
+    target_compile_options(gateway_process_metrics_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_process_metrics_tests
+        COMMAND gateway_process_metrics_tests)
+    set_tests_properties(gateway_process_metrics_tests PROPERTIES TIMEOUT 5)
+
+    add_test(NAME gateway_metrics_cli_test
+        COMMAND gateway-metrics --target self=self --duration-sec 1 --interval-ms 200)
+    set_tests_properties(gateway_metrics_cli_test PROPERTIES
+        TIMEOUT 3
+        PASS_REGULAR_EXPRESSION
+            "elapsed_ms,target,pid,status,cpu_percent,rss_kib,fd_count"
+        FAIL_REGULAR_EXPRESSION "unavailable")
 
     add_test(NAME gateway_mediamtx_cli_test
         COMMAND ${CMAKE_COMMAND}

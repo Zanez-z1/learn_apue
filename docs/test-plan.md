@@ -1245,7 +1245,7 @@ TSan 7/7 PASS。ASan 首次在受限沙箱中为 25/26，唯一失败项因回�
 
 ## 8. Phase 5：性能、稳定性与最终交付
 
-状态：`PENDING`
+状态：`IN PROGRESS`
 
 测试矩阵至少包含：
 
@@ -1264,6 +1264,58 @@ TSan 7/7 PASS。ASan 首次在受限沙箱中为 25/26，唯一失败项因回�
 - 重启次数、内存变化、文件描述符和僵尸进程检查。
 
 通过标准：测试可以复现，所有性能结论均能对应到原始日志或报告。
+
+### 8.1 C17 运行指标采样工具
+
+构建并执行开发机测试：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(process_metrics|metrics_cli)_test'
+```
+
+`gateway_process_metrics_tests` 验证：
+
+- 从 `/proc/<pid>/stat` 提取 user/system CPU tick，兼容进程名中的空格和右括号。
+- 接受 stat 前置字段中的合法负终端进程组，拒绝缺字段、非法数字和负 CPU tick。
+- 从 `/proc/<pid>/status` 读取以 kB 表示的 `VmRSS`，拒绝错误单位和缺失字段。
+- 读取测试进程自身的 CPU tick、RSS 和文件描述符数。
+
+`gateway_metrics_cli_test` 使用 `self=self` 采样 1 秒，验证 CSV 表头和全部样本可用。手工
+短时采样示例：
+
+```bash
+./build/gateway-metrics \
+  --target gateway=<gatewayd-pid> \
+  --target ffmpeg=<ffmpeg-pid> \
+  --target mediamtx=<mediamtx-pid> \
+  --duration-sec 5 \
+  --interval-ms 1000 > /tmp/gateway-metrics.csv
+```
+
+预期：首样本 `cpu_percent` 为空，后续样本为相邻 tick 的 CPU 百分比；100% 表示一个
+逻辑 CPU。采样期间任何 PID 消失时相应行必须为 `unavailable` 且程序非零退出。CSV 不
+接收 URL 或凭据参数。FPS、速度、丢帧和重启次数必须另存开始/结束 HTTP 快照；端到端
+延迟必须使用时间戳画面，不能从 CPU 或 `speed` 推断。
+
+开发机增量记录：
+
+```text
+日期：2026-08-06
+语言：C17
+首轮结果：FAIL；stat 前置负终端字段被错误当作无符号数，真实 self 采样 unavailable
+修复：字段 4～13 按有符号数跳过，仅 CPU tick 字段 14～15 按无符号数读取
+相关测试：2/2 PASS
+完整常规 CTest：28/28 PASS
+ASan/UBSan：28/28 PASS（LeakSanitizer 因 ptrace 环境关闭）
+既有适用 TSan：7/7 PASS
+CMake 临时安装：PASS；gatewayd 和 gateway-metrics 均存在
+安全检查：git diff、显式 (void) 调用、system()/popen() 扫描 PASS
+实板性能数据：PENDING
+长时间测试：本增量不执行
+```
 
 ## 9. 阶段验收记录模板
 

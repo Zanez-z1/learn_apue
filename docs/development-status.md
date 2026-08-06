@@ -44,9 +44,8 @@ git status --short --branch
 
 ## 3. 当前阶段
 
-当前阶段：Phase 4——控制接口、录像和服务化，状态为 `COMPLETE`。开发机软件路径、
-RK3588 单路真实媒体、MediaMTX 录像和 systemd 生命周期均已验收；未经用户明确要求，
-暂不进入 Phase 5。
+当前阶段：Phase 5——性能、稳定性与最终交付，状态为 `IN PROGRESS`。用户已明确要求
+继续推进；先建立短时可重复基线，不执行 30 分钟或更长的稳定性测试。
 
 当前开发机测试基线：
 
@@ -54,8 +53,8 @@ RK3588 单路真实媒体、MediaMTX 录像和 systemd 生命周期均已验收�
 日期：2026-08-06
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：26/26 PASS
-ASan/UBSan：26/26 PASS
+常规 CTest：28/28 PASS
+ASan/UBSan：28/28 PASS
 TSan（适用的录像/HTTP/通道管理器/重载/故障恢复测试）：7/7 PASS
 GCC -fanalyzer：构建完成；9 条跨函数资源所有权/单字符缓冲区路径告警已人工复核
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
@@ -453,6 +452,21 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
   板卡 gatewayd/FFmpeg/MediaMTX 和僵尸进程计数均为 0。PC 临时摄像头 FFmpeg 与临时
   MediaMTX 也已停止，录像、配置和板卡证据未删除。
 
+### Phase 5 增量：C17 运行指标采样工具
+
+- 新增 `gateway-metrics`，可在同一单调时钟窗口内采样最多 16 个 Linux PID，输出
+  elapsed、标签、PID、状态、CPU、RSS 和文件描述符数 CSV。100% CPU 明确定义为一个
+  逻辑 CPU，首样本因没有前一 tick 基线而留空。
+- `/proc/<pid>/stat` 解析从进程名最后一个右括号定位字段，兼容名称中的空格/右括号和
+  前置有符号终端字段；`VmRSS` 必须以 kB 表示。任何目标消失都会输出 unavailable 并使
+  工具非零退出，避免采样期间重启被静默忽略。
+- 单元测试覆盖 stat/status 正常与非法输入、负终端字段和当前进程读取；CLI 端到端使用
+  `self=self` 运行 1 秒并验证 CSV 中没有 unavailable。详细指标口径与待执行矩阵写入新的
+  `docs/benchmark-results.md`，未产生的实板数据保持 PENDING。
+- 完整常规 CTest 28/28、ASan/UBSan 28/28、既有适用 TSan 7/7 PASS；CMake 临时安装树
+  同时包含 `gatewayd` 和 `gateway-metrics`。`git diff --check`、显式 `(void)` 调用和
+  `system()`/`popen()` 扫描通过。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -472,6 +486,7 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - MediaMTX 真实录像、回放、自动删除、低空间状态和停止后重新发布恢复。
 - 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的有限退避及自动恢复。
 - systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
+- 可安装的 C17 进程指标采样工具及 CSV 输出。
 
 当前限制：
 
@@ -481,9 +496,9 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 
 ## 6. 下一步队列
 
-Phase 4 已收口，暂无待执行项。后续仅在用户明确要求后进入 Phase 5；候选工作为长时间
-稳定性、双真实输入、延迟优化、音频方案和可复现性能矩阵，不能把本轮单点资源样本当作
-Phase 5 结论。
+1. 部署工具到 RK3588，使用同一 PC 摄像头输入执行短时软件、MPP 和 MPP/RGA 对比。
+2. 补充 FPS、速度、丢帧、温度和输出探测，形成第一版可复现性能报告。
+3. 长时间、双真实输入、延迟专项和音频仍需用户另行安排。
 
 ## 7. 文档职责
 

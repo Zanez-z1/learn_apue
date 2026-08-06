@@ -311,7 +311,7 @@ Phase 0：PASS
 - 一次发布 `SETUP` 先返回 461，随后成功发布且稳定运行；该兼容性现象保留待后续明确
   输出 RTSP 传输方式。原 Phase 1 的 30 分钟标准尚未执行，当前只标记 5 分钟冒烟通过。
 
-### 本次增量：RK3588 HTTP 生命周期控制验收
+### ca25dd1：RK3588 HTTP 生命周期控制验收
 
 - 在 PC 真实摄像头、跨主机 RTSP、RK3588 RKMpp/RGA 和板卡 MediaMTX 均在线的实际
   链路上验证健康、通道列表、单通道与录像状态查询，四个接口均返回 HTTP 200。
@@ -323,6 +323,22 @@ Phase 0：PASS
 - 验收日志未出现输入 URL，保存在板卡仓库外
   `/home/cat/rk3588-acceptance/2026-08-06/phase4-http-control.log`。开发机并发单元测试的
   锁竞争覆盖仍作为并发证明，板卡测试补充真实进程和真实媒体恢复证据。
+
+### 本次增量：RK3588 MediaMTX 录像与磁盘状态验收
+
+- 在板卡使用真实 `gatewayd --print-mediamtx-config` 生成录像配置，MediaMTX v1.20.0
+  将 PC 摄像头转码输出录制到板卡本地
+  `/home/cat/rk3588-acceptance/recordings`；录像不是存放在 PC。
+- 使用 1 秒 part、5 秒 segment 和 15 秒 delete-after 进行可观察验收。MediaMTX 持续
+  生成非空 fMP4 分段；回放服务列出实际时间段，下载的 5 秒 MP4 为 3,747,338 bytes，
+  ffprobe 确认为 H.264 1920×1080@25fps。
+- 记录一个具体最旧分段后等待 20 秒，该文件由 MediaMTX 自动删除且新分段继续生成；
+  gatewayd 没有主动删除文件，也没有与 recorder 竞争。
+- 正常阈值下录像状态与健康状态均为 ok。将 `min_free_mb` 临时提高到 40000，仅通过
+  比较模拟低空间，不写入填充文件；录像状态变为 low_space、健康状态 degraded，实时
+  通道仍为 RUNNING。恢复 1 MiB 阈值后两个状态回到 ok。
+- 当前录像只有 H.264 视频轨，音频因 pipeline 的 `-an` 未进入发布流。真实证据保存在
+  板卡仓库外，Phase 4 仍等待故障恢复和 systemd 实机验收。
 
 ## 5. 当前能力边界
 

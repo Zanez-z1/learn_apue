@@ -986,6 +986,43 @@ TSan：录像状态/HTTP/通道管理器/重载相关 5/5 PASS
 限制：未制造真实磁盘写满，未启动 MediaMTX，未验证自动删除是否释放空间
 ```
 
+RK3588 真实录像、回放、保留和低空间验收记录：
+
+```text
+日期：2026-08-06
+输入：PC 真实摄像头 -> PC RTSP -> RK3588 RKMpp/RGA -> MediaMTX cam01
+MediaMTX：v1.20.0 linux arm64
+配置来源：板卡 gatewayd --print-mediamtx-config
+录像目录：/home/cat/rk3588-acceptance/recordings（板卡本地，不是 PC）
+格式：fMP4；part=1s；segment=5s；delete-after=15s
+录像：PASS；MediaMTX recorder 报告 1 track (H264)，持续产生非空 MP4 分段
+回放列表：PASS；返回 cam01 实际时间段和 get URL
+回放下载：PASS；5 秒 MP4，3747338 bytes
+回放探测：H.264，1920x1080，25/1 fps，duration=5.000000
+自动删除：PASS；记录的最旧分段在 20 秒观察窗口内消失，新分段继续生成
+常规磁盘状态：ok；目录存在，总量和当前用户可用量均非零
+低空间模拟：min_free=40000 MiB，大于实际文件系统总量，不创建填充文件
+低空间结果：recording=low_space，health=degraded，媒体通道保持 RUNNING
+恢复：恢复 1 MiB 阈值后 recording=ok、health=ok、通道 RUNNING
+音轨：无；当前 gateway 命令使用 -an，录像只含 H.264 视频
+结果：PASS
+```
+
+此验收没有主动删除录像分段；删除动作由 MediaMTX 的 `recordDeleteAfter` 完成。低空间
+测试只改变只读比较阈值，不写满系统盘。API 响应没有暴露录像目录。
+
+板卡仓库外证据：
+
+```text
+/home/cat/rk3588-acceptance/2026-08-06/phase4-mediamtx-generated.yml
+/home/cat/rk3588-acceptance/2026-08-06/phase4-recording-mediamtx.log
+/home/cat/rk3588-acceptance/2026-08-06/phase4-recording-gateway.log
+/home/cat/rk3588-acceptance/2026-08-06/phase4-recording-playback-retention.log
+/home/cat/rk3588-acceptance/2026-08-06/phase4-playback-sample.mp4
+/home/cat/rk3588-acceptance/2026-08-06/phase4-lowspace-recording.json
+/home/cat/rk3588-acceptance/2026-08-06/phase4-lowspace-health.json
+```
+
 ### 7.5 systemd 与优雅退出开发机验收
 
 执行静态部署检查和 SIGTERM 端到端测试：

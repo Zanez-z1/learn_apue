@@ -17,7 +17,7 @@ typedef struct {
     /* All pointers are borrowed and must remain valid until gw_supervisor_run ends. */
     const char *ffprobe_binary;
     const char *ffmpeg_binary;
-    /* Optional signal value published by the CLI's async signal handler. */
+    /* Optional caller-owned stop signal, primarily used by direct module tests. */
     const volatile sig_atomic_t *stop_signal;
     /* Optional manager-owned stop source; nonzero takes priority over stop_signal. */
     gw_supervisor_stop_check stop_check;

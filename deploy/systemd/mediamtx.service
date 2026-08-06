@@ -1,0 +1,36 @@
+[Unit]
+Description=MediaMTX for RK3588 Media Gateway
+Documentation=https://mediamtx.org/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rk-media-gateway
+Group=rk-media-gateway
+ExecStart=/usr/local/bin/mediamtx /etc/rk-media-gateway/mediamtx.yml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+KillSignal=SIGINT
+KillMode=control-group
+SendSIGKILL=yes
+UMask=0027
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/rk-media-gateway
+
+[Install]
+WantedBy=multi-user.target

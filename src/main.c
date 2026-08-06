@@ -1,4 +1,4 @@
-/* Command-line entry point, configuration selection, and signal publication. */
+/* Command-line entry point, configuration selection, and signalfd event loop. */
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/channel_manager.h"
@@ -9,35 +9,56 @@
 #include "gateway/supervisor.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/signalfd.h>
 #include <time.h>
+#include <unistd.h>
 
-/* The handler only publishes intent; supervisor cleanup runs in normal flow. */
-static volatile sig_atomic_t stop_signal;
-static volatile sig_atomic_t reload_requested;
-
-static void handle_stop_signal(int signal_number)
+static int open_control_signal_fd(void)
 {
-    if (signal_number == SIGHUP) {
-        reload_requested = 1;
-    } else {
-        stop_signal = signal_number;
+    sigset_t signals;
+    int result;
+
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGINT);
+    sigaddset(&signals, SIGTERM);
+    sigaddset(&signals, SIGHUP);
+    result = pthread_sigmask(SIG_BLOCK, &signals, NULL);
+    if (result != 0) {
+        errno = result;
+        return -1;
     }
+    return signalfd(-1, &signals, SFD_CLOEXEC | SFD_NONBLOCK);
 }
 
-static bool install_signal_handlers(void)
+static bool read_control_signals(int descriptor, int *requested_stop,
+                                 bool *requested_reload)
 {
-    struct sigaction action;
+    for (;;) {
+        struct signalfd_siginfo information;
+        ssize_t length = read(descriptor, &information, sizeof(information));
 
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = handle_stop_signal;
-    sigemptyset(&action.sa_mask);
-    return sigaction(SIGINT, &action, NULL) == 0 &&
-           sigaction(SIGTERM, &action, NULL) == 0 &&
-           sigaction(SIGHUP, &action, NULL) == 0;
+        if (length == (ssize_t)sizeof(information)) {
+            if (information.ssi_signo == (uint32_t)SIGHUP) {
+                *requested_reload = true;
+            } else if (information.ssi_signo == (uint32_t)SIGINT ||
+                       information.ssi_signo == (uint32_t)SIGTERM) {
+                *requested_stop = (int)information.ssi_signo;
+            }
+            continue;
+        }
+        if (length < 0 && errno == EINTR) {
+            continue;
+        }
+        if (length < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return true;
+        }
+        return false;
+    }
 }
 
 static bool recording_config_equal(const gw_recording_config *first,
@@ -118,13 +139,17 @@ static int run_dry_run(const gw_config *config, const char *ffmpeg_binary)
 }
 
 static int run_channels(const char *config_path, const gw_config *config,
-                        gw_supervisor_options *options, bool exit_when_idle)
+                        gw_supervisor_options *options, bool exit_when_idle,
+                        int signal_descriptor)
 {
     const struct timespec poll_interval = {.tv_sec = 0, .tv_nsec = 100000000L};
     gw_channel_manager *manager = NULL;
     gw_http_server *http_server = NULL;
     gw_error error = {0};
     gw_status status;
+    int requested_stop = 0;
+    bool requested_reload = false;
+    bool signal_read_failed = false;
     int result;
 
     status = gw_channel_manager_create(&manager, config, options, &error);
@@ -162,16 +187,22 @@ static int run_channels(const char *config_path, const gw_config *config,
     for (;;) {
         bool finished = gw_channel_manager_is_finished(manager);
 
-        if (stop_signal != 0) {
-            gw_channel_manager_request_stop(manager, (int)stop_signal);
+        if (!read_control_signals(signal_descriptor, &requested_stop,
+                                  &requested_reload)) {
+            fprintf(stderr, "Cannot read control signals: %s\n", strerror(errno));
+            requested_stop = SIGTERM;
+            signal_read_failed = true;
+        }
+        if (requested_stop != 0) {
+            gw_channel_manager_request_stop(manager, requested_stop);
             if (finished) {
                 break;
             }
-        } else if (reload_requested != 0) {
+        } else if (requested_reload) {
             gw_channel_reload_summary summary;
             gw_config candidate;
 
-            reload_requested = 0;
+            requested_reload = false;
             status = gw_config_load_file(config_path, &candidate, &error);
             if (status != GW_OK) {
                 fprintf(stderr, "Configuration reload rejected (%s): %s\n",
@@ -210,6 +241,9 @@ static int run_channels(const char *config_path, const gw_config *config,
     }
     gw_http_server_stop(http_server);
     result = gw_channel_manager_wait(manager);
+    if (signal_read_failed) {
+        result = 1;
+    }
     gw_http_server_destroy(http_server);
     gw_channel_manager_destroy(manager);
     return result;
@@ -227,6 +261,8 @@ int main(int argc, char **argv)
     gw_error error = {0};
     gw_status status;
     int argument;
+    int signal_descriptor;
+    int result;
 
     /* Preserve one-record-per-line diagnostics when stdout is redirected. */
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -285,9 +321,13 @@ int main(int argc, char **argv)
         return print_mediamtx_config(&config);
     }
 
-    if (!install_signal_handlers()) {
-        fprintf(stderr, "Cannot install signal handlers: %s\n", strerror(errno));
+    signal_descriptor = open_control_signal_fd();
+    if (signal_descriptor < 0) {
+        fprintf(stderr, "Cannot open signal descriptor: %s\n", strerror(errno));
         return 1;
     }
-    return run_channels(config_path, &config, &options, exit_when_idle);
+    result = run_channels(config_path, &config, &options, exit_when_idle,
+                          signal_descriptor);
+    close(signal_descriptor);
+    return result;
 }

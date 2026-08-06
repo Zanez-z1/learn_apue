@@ -38,6 +38,16 @@ target_compile_options(gatewayd PRIVATE -Wall -Wextra -Wpedantic -Wconversion -W
 install(TARGETS gatewayd RUNTIME DESTINATION bin)
 install(FILES config/gateway.example.yaml config/mediamtx.example.yml
         DESTINATION share/rk-media-gateway)
+install(FILES
+        deploy/systemd/rk-media-gateway.service
+        deploy/systemd/mediamtx.service
+        DESTINATION lib/systemd/system)
+install(FILES deploy/systemd/rk-media-gateway.tmpfiles.conf
+        DESTINATION lib/tmpfiles.d
+        RENAME rk-media-gateway.conf)
+install(FILES deploy/systemd/gateway.env.example
+        DESTINATION share/rk-media-gateway)
+install(FILES docs/deployment.md DESTINATION share/doc/rk-media-gateway)
 
 if(GATEWAY_BUILD_TESTS)
     enable_testing()
@@ -103,6 +113,12 @@ if(GATEWAY_BUILD_TESTS)
             -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/config/gateway.example.yaml
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_mediamtx_config.cmake)
     set_tests_properties(gateway_mediamtx_cli_test PROPERTIES TIMEOUT 5)
+
+    add_test(NAME gateway_deployment_tests
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_deployment.cmake)
+    set_tests_properties(gateway_deployment_tests PROPERTIES TIMEOUT 5)
 
     add_executable(gateway_process_fixture tests/integration/process_fixture.c)
     target_compile_options(gateway_process_fixture PRIVATE

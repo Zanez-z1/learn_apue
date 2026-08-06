@@ -53,8 +53,8 @@ Phase 3 的开发机路径已完成，RK3588 真实媒体链路验收仍为 `PEN
 日期：2026-08-06
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 CTest：25/25 PASS
-ASan/UBSan：25/25 PASS
+常规 CTest：26/26 PASS
+ASan/UBSan：26/26 PASS
 TSan（录像状态/HTTP/通道管理器/重载相关）：5/5 PASS
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
 RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
@@ -218,7 +218,7 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - MediaMTX 仍是独立服务，gatewayd 不创建、重载或伪造其运行结果。录像参数变化需要
   重新生成配置并由部署流程重载 MediaMTX。
 
-### 本次增量：录像磁盘状态管理
+### 0396124：录像磁盘状态管理
 
 - 新增纯 `statvfs()` 录像状态模块，按当前服务用户可用块计算总容量与可用容量，不扫描
   录像文件，也不接触 MediaMTX 正在写入的分段。
@@ -230,6 +230,25 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
   文件，避免与 MediaMTX 写入竞争或产生路径穿越风险。
 - 单元测试覆盖关闭、正常、低空间、目录不可用和参数错误；HTTP 单元与真实回环测试
   覆盖 JSON、健康降级、GET-only、目录隐藏和密码边界。
+
+### 本次增量：systemd 服务化与优雅退出
+
+- 新增 gatewayd 与独立 MediaMTX 的 systemd 单元；使用同一非 root 服务账号共享录像
+  目录，MediaMTX 仍不是 gatewayd 子进程。
+- gatewayd 单元通过 EnvironmentFile 注入凭据，支持 `systemctl reload` 转换为 SIGHUP，
+  异常退出按 `Restart=on-failure` 恢复，正常停止使用 SIGTERM。
+- 两个服务均配置 control-group 清理、停止超时、写目录白名单、NoNewPrivileges、严格
+  文件系统保护和多项内核/权限加固。
+- tmpfiles 规则创建配置、状态与录像目录；CMake 安装规则包含二进制、示例配置、服务
+  单元、环境示例和部署文档。
+- 部署静态测试检查关键退出、重启、权限和路径配置；HTTP 端到端增强为 SIGTERM 后同时
+  验证 gatewayd 正常退出、最终 FFmpeg PID 消失且 HTTP 监听关闭。
+- TSan 在增强测试中发现异步处理器可能落到任意工作线程。现改为主线程通过 Linux
+  `signalfd` 同步消费 SIGHUP/SIGINT/SIGTERM，所有工作线程继承屏蔽掩码；
+  `posix_spawn` 明确为 ffprobe/FFmpeg 恢复空掩码与默认信号动作，保留优雅停止能力。
+- 开发机没有以 PID 1 运行测试单元。`systemd-analyze verify` 已解析单元，仅因开发机
+  `/usr/local/bin` 尚未安装目标二进制而返回缺失命令；真实 enable/start/restart 仍必须
+  在板卡执行，未伪造为通过。
 
 ## 5. 当前能力边界
 
@@ -243,20 +262,21 @@ RK3588 MPP/RGA：当前开发机不具备，等待板卡验收
 - SIGHUP 候选配置校验与按通道差异化重载。
 - 开发机夹具模拟输入或发布端中断后，故障通道可独立退避并恢复运行。
 - 本地 HTTP 健康检查、通道状态查询，以及并发安全的启动、停止和重启控制。
+- MediaMTX 录像配置生成、自动保留参数和录像文件系统健康状态。
+- gatewayd/MediaMTX systemd 单元、非 root 权限边界与部署文档。
 - 开发机假工作进程端到端验证。
 
 尚未具备：
 
 - RK3588 板卡上的真实 RTSP/ffprobe 与 MPP/RGA 联调。
 - 真实 MediaMTX 发布端停止、恢复与重新发布联调。
-- systemd 部署。
 - RK3588 真实硬件转码与稳定性/性能数据。
 
 ## 6. 下一步队列
 
 按顺序执行：
 
-1. 增加 systemd 服务、环境文件和开发机服务化验收。
+1. 执行 Phase 4 最终全量测试、安全审计和文档一致性检查。
 
 ## 7. 文档职责
 

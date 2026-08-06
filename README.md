@@ -21,8 +21,8 @@ RTSP、WebRTC 和 HLS 分发。
 - 提供录像文件系统容量、最低空闲阈值和降级状态查询。
 - RK3588 媒体环境检查脚本。
 
-录像配置生成、自动保留策略和磁盘状态接口已经实现；systemd 部署和真实录像验收
-尚未完成，也尚未通过 RK3588 真实媒体链路验收，
+录像配置生成、自动保留策略、磁盘状态接口和 systemd 部署文件已经实现；尚未在目标
+板卡完成真实录像和开机启动验收，也尚未通过 RK3588 真实媒体链路验收，
 不能将当前版本作为完整网关服务部署。
 
 ## 构建
@@ -103,6 +103,21 @@ MediaMTX 配置并重载或重启 MediaMTX；向 `gatewayd` 发送 SIGHUP 不会
 `GET /v1/recording` 返回录像文件系统总量、当前用户可用量、阈值和
 `ok`/`low_space`/`unavailable` 状态；目录本身不会暴露在 API 中。空间不足时健康检查
 变为 `degraded`，自动删除仍由 MediaMTX 的 `recordDeleteAfter` 执行。
+
+## systemd 部署
+
+安装目标包含 `rk-media-gateway.service`、独立的 `mediamtx.service`、tmpfiles 目录规则
+和环境文件示例。基本入口：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build build --parallel
+sudo cmake --install build
+```
+
+不要直接启动示例配置；先创建非 root 服务账号、安装真实配置并以 0600 权限保存凭据。
+完整步骤、重载边界、优雅停止和安全说明见
+[docs/deployment.md](docs/deployment.md)。
 
 ## 板卡环境检查
 

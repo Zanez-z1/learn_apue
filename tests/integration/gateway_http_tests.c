@@ -212,6 +212,7 @@ int main(int argc, char **argv)
     unsigned int port = 0U;
     long initial_pid = -1L;
     long started_pid = -1L;
+    long final_pid = -1L;
     bool actions_initialized = false;
     int exit_code = 1;
 
@@ -304,7 +305,7 @@ int main(int argc, char **argv)
         expect_response(port,
                         "POST /v1/channels/cam01/restart HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
                         "HTTP/1.1 202 Accepted", "\"action\":\"restart\"") < 0 ||
-        wait_for_channel_state(port, "RUNNING", started_pid, NULL) < 0) {
+        wait_for_channel_state(port, "RUNNING", started_pid, &final_pid) < 0) {
         goto cleanup;
     }
 
@@ -324,6 +325,17 @@ int main(int argc, char **argv)
     } while (result < 0 && errno == EINTR);
     child = -1;
     if (result < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        goto cleanup;
+    }
+    errno = 0;
+    if (final_pid <= 0L || kill((pid_t)final_pid, 0) == 0 || errno != ESRCH) {
+        fprintf(stderr, "worker process remained after gateway shutdown\n");
+        goto cleanup;
+    }
+    if (request_http(port, "GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                     strlen("GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+                     response, sizeof(response)) == 0) {
+        fprintf(stderr, "HTTP listener remained after gateway shutdown\n");
         goto cleanup;
     }
     if (read_file(log_path, log, sizeof(log)) < 0 ||

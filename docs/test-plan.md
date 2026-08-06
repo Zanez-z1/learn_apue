@@ -873,6 +873,50 @@ TSan：录像状态/HTTP/通道管理器/重载相关 5/5 PASS
 限制：未制造真实磁盘写满，未启动 MediaMTX，未验证自动删除是否释放空间
 ```
 
+### 7.5 systemd 与优雅退出开发机验收
+
+执行静态部署检查和 SIGTERM 端到端测试：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(deployment|http)_tests'
+cmake --install build --prefix /tmp/rk-media-gateway-install-test
+```
+
+`gateway_deployment_tests` 检查：
+
+- gatewayd 使用非 root 用户、受保护 EnvironmentFile、SIGHUP ExecReload、
+  `Restart=on-failure`、SIGTERM、control-group 清理和 20 秒停止上限。
+- gatewayd 与 MediaMTX 都启用 NoNewPrivileges、只读系统目录和录像目录写白名单。
+- MediaMTX 独立服务运行，gatewayd 仅通过 `Wants`/`After` 表达启动顺序。
+- tmpfiles 创建录像目录，部署文件不包含测试密码或内嵌 Password 字段。
+- CMake 临时安装树包含二进制、两个服务单元、tmpfiles、环境示例、YAML 和部署文档。
+
+`gateway_http_tests` 的停止路径检查：
+
+- 向常驻 gatewayd 发送 SIGTERM 后退出码为 0。
+- 主线程通过 signalfd 消费控制信号，TSan 不再报告处理器落入工作线程的数据竞争。
+- 子进程的 posix_spawn 属性恢复默认 SIGINT/SIGTERM/SIGHUP 和空信号掩码。
+- 最后一次 restart 后的 FFmpeg PID 已不存在，不遗留工作进程。
+- HTTP 端口已经关闭，不能继续接受健康检查。
+- 日志不包含测试 URL 密码。
+
+本增量验收记录：
+
+```text
+日期：2026-08-06
+测试机器：x86_64 开发机，非 systemd 测试容器
+相关常规 CTest：2/2 PASS
+完整常规 CTest：26/26 PASS
+ASan/UBSan：26/26 PASS（LeakSanitizer 因 ptrace 环境关闭）
+TSan：录像状态/HTTP/通道管理器/重载相关 5/5 PASS
+CMake 临时安装：PASS
+systemd-analyze verify：单元被解析；因 /usr/local/bin/gatewayd 和 mediamtx 未安装而退出 1
+结果：PASS（部署文件静态契约与进程优雅退出）；PENDING（真实 systemd 生命周期）
+限制：未执行 enable、开机启动、异常自动恢复、真实 MediaMTX 停止或板卡设备权限验收
+```
+
 功能完成后，本节需要覆盖：
 
 - API 默认只监听回环地址。

@@ -117,7 +117,10 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
     posix_spawnattr_t attributes;
     bool actions_initialized = false;
     bool attributes_initialized = false;
-    short flags = POSIX_SPAWN_SETPGROUP;
+    short flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF |
+                  POSIX_SPAWN_SETSIGMASK;
+    sigset_t default_signals;
+    sigset_t empty_mask;
     pid_t child_pid = -1;
     int result;
     gw_status status;
@@ -170,12 +173,23 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
     }
     attributes_initialized = true;
     /* A dedicated process group lets stop/kill include any FFmpeg descendants. */
+    sigemptyset(&default_signals);
+    sigaddset(&default_signals, SIGINT);
+    sigaddset(&default_signals, SIGTERM);
+    sigaddset(&default_signals, SIGHUP);
+    sigemptyset(&empty_mask);
     result = posix_spawnattr_setflags(&attributes, flags);
     if (result == 0) {
         result = posix_spawnattr_setpgroup(&attributes, 0);
     }
+    if (result == 0) {
+        result = posix_spawnattr_setsigdefault(&attributes, &default_signals);
+    }
+    if (result == 0) {
+        result = posix_spawnattr_setsigmask(&attributes, &empty_mask);
+    }
     if (result != 0) {
-        set_error(error, GW_ERR_IO, "cannot configure worker process group: %s",
+        set_error(error, GW_ERR_IO, "cannot configure worker spawn attributes: %s",
                   strerror(result));
         goto fail;
     }

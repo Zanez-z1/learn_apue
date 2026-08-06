@@ -267,12 +267,16 @@ STOPPED ---- start ----> PROBING ---- success ----> STARTING
 
 ## 8. 线程与事件模型
 
-`gatewayd` 建议采用少量线程和事件驱动结合的模型：
+`gatewayd` 采用少量线程和事件驱动结合的模型：
 
-- 主线程：初始化、配置加载、信号处理和服务退出。
-- 监控线程：使用 `epoll` 监听 FFmpeg stdout/stderr 管道、`signalfd` 和 `timerfd`。
+- 主线程：初始化、配置加载，通过 `signalfd` 同步消费 SIGHUP/SIGINT/SIGTERM，并协调
+  服务退出。
+- 每通道 supervisor 线程：监督 ffprobe/FFmpeg 进程及 stdout/stderr 管道。
 - HTTP 线程：处理本地控制和查询请求。
-- 指标采样线程：周期读取 `/proc` 并更新进程资源数据。
+
+进程控制信号在创建线程前统一屏蔽，因此不会在 supervisor 或 HTTP 线程执行异步信号
+处理器。创建 ffprobe/FFmpeg 时通过 `posix_spawn` 属性恢复空信号掩码和默认处理方式，
+保证子进程仍能收到正常停止信号。
 
 共享的通道快照注册表使用 POSIX 读写锁保护，耗时操作不能持有该读写锁。生命周期
 命令使用另一把互斥锁串行化；该锁可以覆盖进程停止和线程回收，以保证同一通道不会
@@ -443,7 +447,7 @@ rk3588-media-gateway/
 │   ├── api/
 │   └── logging/
 ├── deploy/
-│   └── systemd/
+│   └── systemd/              # gatewayd/MediaMTX 单元、环境示例和 tmpfiles
 ├── scripts/
 │   ├── check_media_env.sh
 │   ├── run_test_source.sh

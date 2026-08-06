@@ -1590,6 +1590,24 @@ H.264 720p25 并可完整软件解码；无解码/编码错误、无残留进程
 这是同一 PC 摄像头固定文件的重复输入，只验证板卡资源容量；不得把结果
 标记为多路真实 RTSP 摄像头验收。
 
+实板记录：
+
+```text
+日期：2026-08-06
+提交：17c6084
+板卡 Release 构建/CTest：31/31 PASS
+1 路：CPU 平均合计 137.8%，RSS 18.1 MiB，1029.98fps，drop=0，结束 51.8°C
+2 路：CPU 平均合计 125.2%，RSS 35.8 MiB，总 1056.78fps，每路约 528.4fps，结束 57.3°C
+4 路：CPU 平均合计 152.2%，RSS 71.5 MiB，总 1061.94fps，每路 265.23~266.14fps，结束 63.8°C
+样本：7 路均 11 available/0 unavailable，10 个 CPU 有效样本，drop=0
+输出：7/7 份 3 秒 H.264 1280x720@25 通过 ffprobe 和独立完整软件解码
+错误：无解码/编码错误，无 unavailable
+清理：gatewayd/FFmpeg/MediaMTX/zombie 均为 0，服务 enabled/inactive
+证据：/home/cat/rk3588-acceptance/2026-08-06/phase5-capacity-{1,2,4}
+范围：PASS（重复固定样本硬件管线容量）
+非范围：多个真实 RTSP 输入、gatewayd/MediaMTX 完整在线负载
+```
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

@@ -1500,6 +1500,48 @@ RK3588 MPP+RGA 720p：CPU 137.5%/146.0%，RSS 18.3/18.4 MiB，1038.54fps/41.5x�
 长时间测试：本增量不执行
 ```
 
+### 8.4 RK3588 720p 码率矩阵
+
+在 8.3 的 3000 kbit/s 结果上补充 1500 和 6000 kbit/s；每个码率使用
+独立目录，避免触发防覆盖机制：
+
+```bash
+sample=/home/cat/rk3588-acceptance/2026-08-06/phase5/pc-camera-15s.mkv
+runner=/usr/local/share/rk-media-gateway/scripts/run_transcode_benchmark.sh
+
+for rate in 1500 6000; do
+  result=/home/cat/rk3588-acceptance/2026-08-06/phase5-bitrate-$rate
+  "$runner" --mode software --input "$sample" --output-dir "$result" \
+    --output-width 1280 --output-height 720 --bitrate-kbps "$rate"
+  "$runner" --mode mpp-rga --input "$sample" --output-dir "$result" \
+    --output-width 1280 --output-height 720 --bitrate-kbps "$rate"
+done
+```
+
+一次只能运行一条路径。每组必须检查 `metrics-summary.csv` 中
+`unavailable_samples=0`，progress 中 `drop_frames=0`，并复核 ffprobe、完整软件解码、
+stderr、温度与进程清理。
+
+实板记录：
+
+```text
+日期：2026-08-06
+提交：7fd1f3d
+板卡 Release 构建/CTest：30/30 PASS
+软件 1500k：CPU 261.3%/294.0%，RSS 138.0/139.0 MiB，20.16fps/0.806x，drop=0
+软件 6000k：CPU 283.0%/314.0%，RSS 138.1/139.3 MiB，17.97fps/0.719x，drop=0
+MPP+RGA 1500k：CPU 135.6%/147.0%，RSS 18.3/18.5 MiB，1031.72fps/41.3x，drop=0
+MPP+RGA 6000k：CPU 158.1%/164.0%，RSS 18.0/18.2 MiB，1011.65fps/40.5x，drop=0
+汇总：四组均 11 available/0 unavailable，10 个 CPU 有效样本
+实际输出：四份 3 秒 H.264 1280x720@25 均通过 ffprobe 和独立完整软件解码
+日志：无解码/编码错误；软件路径仅有已知像素范围弃用警告
+温度：1500k 软件 40.7->47.2°C，MPP+RGA 42.5->52.7°C
+      6000k 软件 45.3->51.8°C，MPP+RGA 46.2->56.4°C
+清理：gatewayd/FFmpeg/MediaMTX/zombie 均为 0，服务均 enabled/inactive
+长时间测试：未执行
+结果：PASS（仅码率短时矩阵）
+```
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

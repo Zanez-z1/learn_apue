@@ -146,3 +146,19 @@ gateway-metrics \
 
 PID 需替换为当前实际进程。详细口径、FPS/丢帧配套采集方式和性能结果见
 [docs/benchmark-results.md](docs/benchmark-results.md)。
+
+## 固定样本转码测试
+
+安装后可使用同一个本地视频样本比较软件、MPP 和 MPP+RGA 路径：
+
+```bash
+/usr/local/share/rk-media-gateway/scripts/run_transcode_benchmark.sh \
+  --mode mpp-rga \
+  --input /absolute/path/input.mkv \
+  --output-dir /absolute/path/results \
+  --output-width 1280 --output-height 720 --bitrate-kbps 3000
+```
+
+`--mode` 可为 `software`、`mpp` 或 `mpp-rga`。脚本默认预热 2 秒、采样 10 秒，
+并实际生成 3 秒输出做 ffprobe 和完整软件解码校验。它只接受本地固定文件，
+且不覆盖已有结果。开发者验收步骤见 [docs/test-plan.md](docs/test-plan.md)。

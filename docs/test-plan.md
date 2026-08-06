@@ -1413,6 +1413,66 @@ MPP+RGA 正式短测：CPU 75.2%/85.0%，RSS 18.1/18.1 MiB，497.70fps，19.9x�
 `/home/cat/rk3588-acceptance/2026-08-06/phase5/`。微基准是最大吞吐测试，不代表
 在线网关会以 493fps 输出；正式在线输出仍为 25fps。端到端延迟和其他矩阵项保持 PENDING。
 
+### 8.3 固定样本基准运行器
+
+开发机行为测试：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R gateway_benchmark_runner_tests
+```
+
+`gateway_benchmark_runner_tests` 使用 C 实现的可控 FFmpeg 夹具，不需要真实媒体或
+MPP 硬件。它验证：
+
+- 软件路径改变尺寸时使用 swscale，MPP+RGA 使用 `scale_rkrga`。
+- `mpp` 模式输出尺寸与输入不同时拒绝运行。
+- 同模式、分辨率的任何结果文件已存在时拒绝覆盖。
+- 指标 CSV、验证输出均生成，运行器源码不包含 `eval`。
+
+安装树检查：
+
+```bash
+install_root=$(mktemp -d /tmp/rk-gateway-install.XXXXXX)
+DESTDIR="$install_root" cmake --install build
+test -x "$install_root/usr/local/share/rk-media-gateway/scripts/run_transcode_benchmark.sh"
+```
+
+RK3588 上的短测示例（一次只运行一条）：
+
+```bash
+sample=/home/cat/rk3588-acceptance/2026-08-06/phase5/pc-camera-15s.mkv
+result=/home/cat/rk3588-acceptance/2026-08-06/phase5-720p
+runner=/usr/local/share/rk-media-gateway/scripts/run_transcode_benchmark.sh
+
+"$runner" --mode software --input "$sample" --output-dir "$result" \
+  --output-width 1280 --output-height 720 --bitrate-kbps 3000
+"$runner" --mode mpp-rga --input "$sample" --output-dir "$result" \
+  --output-width 1280 --output-height 720 --bitrate-kbps 3000
+```
+
+通过标准：两次运行均返回 0，CSV 不含 `unavailable`，stderr 无解码/编码
+错误，`output-probe.txt` 显示 H.264 1280×720，`output-decode.log` 为空且输出可完整
+软件解码。每个模式默认只运行约 15 秒，本节不是 30 分钟或长时间稳定性测试。
+
+开发机增量记录：
+
+```text
+日期：2026-08-06
+常规行为测试：PASS
+ASan/UBSan 行为测试：PASS
+完整常规 CTest：29/29 PASS
+完整 ASan/UBSan：29/29 PASS（LeakSanitizer 因 ptrace 环境关闭）
+适用 TSan：7/7 PASS
+临时安装树：PASS；运行器为可执行安装文件
+零预热诊断：ASan 启动较慢时夹具尚未安装信号处理器，改为 1 秒测试预热
+安全边界：本地普通文件、非根绝对输出目录、防覆盖、无 eval
+RK3588 720p 结果：PENDING
+长时间测试：本增量不执行
+```
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

@@ -58,9 +58,12 @@ install(FILES deploy/systemd/rk-media-gateway.tmpfiles.conf
 install(FILES deploy/systemd/gateway.env.example
         DESTINATION share/rk-media-gateway)
 install(FILES docs/deployment.md DESTINATION share/doc/rk-media-gateway)
+install(PROGRAMS scripts/check_media_env.sh scripts/run_transcode_benchmark.sh
+        DESTINATION share/rk-media-gateway/scripts)
 
 if(GATEWAY_BUILD_TESTS)
     enable_testing()
+    find_program(BASH_PROGRAM bash REQUIRED)
     add_executable(gateway_unit_tests tests/unit/gateway_tests.c)
     target_link_libraries(gateway_unit_tests PRIVATE gateway_core)
     target_compile_options(gateway_unit_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
@@ -133,6 +136,17 @@ if(GATEWAY_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION
             "elapsed_ms,target,pid,status,cpu_percent,rss_kib,fd_count"
         FAIL_REGULAR_EXPRESSION "unavailable")
+
+    add_executable(gateway_benchmark_ffmpeg_fixture
+        tests/integration/benchmark_ffmpeg_fixture.c)
+    target_compile_options(gateway_benchmark_ffmpeg_fixture PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    add_test(NAME gateway_benchmark_runner_tests
+        COMMAND ${BASH_PROGRAM}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/benchmark_runner_tests.sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_transcode_benchmark.sh
+            $<TARGET_FILE:gateway_benchmark_ffmpeg_fixture>)
+    set_tests_properties(gateway_benchmark_runner_tests PROPERTIES TIMEOUT 10)
 
     add_test(NAME gateway_mediamtx_cli_test
         COMMAND ${CMAKE_COMMAND}

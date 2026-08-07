@@ -44,9 +44,9 @@ git status --short --branch
 
 ## 3. 当前阶段
 
-当前阶段：实时视频 OSD 监控，状态为 `IN PROGRESS`。开发机实现、动态门禁和 RK3588
-部署已完成；PC 摄像头当前未连接，短时真实画面与恢复验收尚未完成。双真实输入保持
-`PENDING`；本轮不执行 30 分钟及更长长稳，音频仍是排除范围。
+当前阶段：五分钟单路真实摄像头演示闭环，状态为 `COMPLETE`。开发机实现、动态门禁、
+RK3588 部署、长期 FAILED 后无人值守恢复、真实浏览器 WebRTC+OSD 和重复断流恢复均已
+完成。双真实输入保持 `PENDING`；本轮不执行 30 分钟及更长长稳，音频仍是排除范围。
 
 当前开发机测试基线：
 
@@ -54,9 +54,9 @@ git status --short --branch
 日期：2026-08-07
 平台：x86_64 Arch Linux
 编译器：GCC 16.1.1
-常规 Debug CTest：31/31 PASS
-Release CTest：31/31 PASS
-ASan/UBSan：31/31 PASS
+常规 Debug CTest：33/33 PASS
+Release CTest：33/33 PASS
+ASan/UBSan：33/33 PASS
 TSan（适用的指标/录像/HTTP/通道管理器/重载/故障恢复测试）：8/8 PASS
 GCC -fanalyzer：构建完成；修复 1 个测试夹具关闭缺口，剩余 6 条跨函数告警已人工复核
 LeakSanitizer：当前 ptrace 环境不支持，尚未完成
@@ -77,7 +77,7 @@ MediaMTX：v1.20.0 linux arm64
 板卡完整 CTest：31/31 PASS
 Phase 0、1、2、4：按当前单路和 5 分钟以上实机范围 PASS
 Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入板卡验收未执行
-实时 OSD：Release 31/31 与 systemd 部署 PASS；真实画面、在线指标和恢复仍 PENDING
+实时 OSD：部署、真实画面、在线指标、长期离线恢复和重复断流恢复 PASS
 限制：无音频；未执行 30 分钟长稳
 ```
 
@@ -736,6 +736,33 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
   退避配置不变。该用例单独复跑 PASS，随后 ASan/UBSan 完整 33/33 PASS；Release 33/33、
   适用 TSan 8/8 也通过。最终提交后的 Debug/Release 顺序复跑仍按测试计划执行。
 
+### 当前增量：五分钟演示真实验收收口
+
+- 当前提交在板端 staging `/home/cat/rk3588-media-gateway-ab72fa3` 使用 aarch64 GCC 10.2.1
+  Release 构建并精确安装。安装后的 `gatewayd` 和 `diagnostic.html` 与 staging 产物
+  SHA-256 一致；真实 `/etc/rk-media-gateway` 配置未被覆盖。
+- `rk-media-gateway.service` 于 2026-08-07 15:01:30 CST 启动，gatewayd PID 945811。
+  PC 保持无 8554 监听后，cam01 在 15:04:36 以 failures=11 超过 `max_retries=10` 进入
+  FAILED；15:05:06 完成下一次 30 秒低频探测并以 failures=12 继续 FAILED，服务 PID
+  未变化，PID、输入、progress、CPU/RSS 均为 unavailable。
+- PC `/dev/video0` 预检确认 MJPEG 1280x720@30，PC 地址 192.168.1.16、MediaMTX v1.20.0
+  和 TCP 8554 均符合要求。用户只通过 9080 SSH 隧道打开
+  `/view/cam01?media_host=192.168.1.45`，确认离线 OSD 后启动专用源脚本；未调用控制接口，
+  未重启任何板端服务。
+- 同一 gatewayd 于 15:09:37 从长期 FAILED 进入 PROBING，15:09:40 探测成功并启动工作
+  PID 975340，15:09:43 回到 RUNNING。用户确认浏览器无需刷新即自动出现真实 WebRTC 画面
+  和 OSD；15:10:43 stable 后连续失败数清零。在线快照为 H.264 1920x1080、约 25.11 FPS、
+  丢帧 0、CPU 17.97%、RSS 16620 KiB。
+- 用户随后按源脚本的行输入控制停止并恢复 PC FFmpeg。板端工作 PID 992453 于 15:18:17
+  退出后独立进入 BACKOFF/PROBING，15:18:34 探测恢复输入，工作 PID 1007577 于 15:18:37
+  回到 RUNNING；gatewayd PID 仍为 945811。恢复快照约 25.87 FPS、丢帧 0、CPU 21.95%、
+  RSS 16640 KiB，用户再次确认画面与 OSD 自动恢复。越过 `stable_run_sec` 后 worker 仍为
+  1007577，consecutive_failures 清零，约 25.11 FPS、丢帧 0、CPU 20.97%、RSS 15580 KiB。
+- 源脚本控制是行输入而非单键即时输入。实际验收暴露提示歧义后，提示及用户文档统一改为
+  “输入 `s`/`r`/`q` 后按回车”；这不改变媒体或监督逻辑。
+- 单路五分钟演示闭环为 PASS。双 PC 双真实输入和 30 分钟及更长长稳未执行；分别保持
+  `PENDING` 和 `SKIPPED`。音频、AI 和可移动 OSD 不属于本次主线收口。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -757,7 +784,7 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
 - 可安装的 C17 进程指标采样工具及原始/汇总 CSV 输出。
 - gatewayd 后台采样每路 FFmpeg CPU/RSS，并通过需要受校验 `media_host` 的轻量浏览器
-  诊断页显示 WebRTC 画面和一秒刷新 OSD；新版真实浏览器验收仍为 PENDING。
+  诊断页显示 WebRTC 画面和一秒刷新 OSD；新版真实浏览器和自动恢复已在单路实板 PASS。
 
 当前限制：
 
@@ -767,11 +794,10 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 
 ## 6. 后置验收队列
 
-当前优先收口五分钟演示闭环，不进入 AI 或其他 Phase 扩展。剩余项按顺序为：
+五分钟单路演示闭环已经收口，不进入 AI 或其他 Phase 扩展。后置项为：
 
-1. 完整门禁、板端重新部署和单路真实浏览器/WebRTC 长期离线恢复验收。
-2. 使用第二个真实 RTSP 源完成双真实输入隔离和在线资源验收。
-3. 30 分钟及更长稳定性、音频和 AI 均不在当前目标内。
+1. 条件具备时使用第二个真实 RTSP 源完成双真实输入隔离和在线资源验收。
+2. 30 分钟及更长稳定性、音频、AI 和辅助界面增强均不在当前目标内。
 
 ## 7. 文档职责
 

@@ -1854,8 +1854,8 @@ done
 3. 停止 PC 推流后显示 BACKOFF，当前 FFmpeg PID、progress 和 CPU/RSS 显示 unavailable。
 4. 恢复同一输入后出现不同的 FFmpeg PID 并回到 RUNNING，健康通道继续工作。
 5. 录制一小段后回放检查不包含 OSD，证明覆盖层没有写入视频帧。
-6. 在 PC 源脚本输入 `s` 只停止 FFmpeg、保持 PC MediaMTX，再输入 `r` 恢复；确认页面第二次
-   自动恢复且 FFmpeg PID 再次变化。
+6. 在 PC 源脚本输入 `s` 并按回车，只停止 FFmpeg、保持 PC MediaMTX；再输入 `r` 并按
+   回车恢复，确认页面第二次自动恢复且 FFmpeg PID 再次变化。
 
 这是一轮短时功能验收，不运行 30 分钟及更长稳定性测试。浏览器截图可以作为人工可见
 证据，但必须同时保存脱敏 JSON、服务状态和精确时间段，不能只写“看起来正常”。
@@ -1877,9 +1877,9 @@ http://127.0.0.1:9080/view/cam02?media_host=BOARD_IP
 
 ```text
 日期：2026-08-07
-单路真实画面与 OSD：PENDING
-指标实时刷新：PENDING
-断流与新 PID 恢复：PENDING
+单路真实画面与 OSD：PASS（用户在真实浏览器确认同屏可见且无需开发者工具）
+指标实时刷新：PASS（H.264 1920x1080、约 25 FPS、丢帧 0、CPU/RSS 可用）
+断流与新 PID 恢复：PASS（gatewayd PID 945811 未变，worker 975340 后更新为 1007577）
 录像不含 OSD：PENDING
 双 PC 双真实输入：PENDING
 连接审计：初次两次 No route to host；连接恢复后完成 staging 构建、31/31 和 systemd 部署
@@ -1889,10 +1889,10 @@ http://127.0.0.1:9080/view/cam02?media_host=BOARD_IP
 旧 9080+8889 SSH 隧道拓扑：FAIL（缺少 8189 ICE；结论已撤回）
 新版 media_host 页面自动化：PASS（IPv4/IPv6/DNS、非法输入、必要重载）
 新版 PC 源预检自动化：PASS（格式、路由、端口冲突、无宽泛 kill）
-新版真实 WebRTC/OSD：PENDING（尚未重新部署，PC 当前无 /dev/video0）
+新版真实 WebRTC/OSD：PASS（2026-08-07 已重新部署并由用户完成浏览器验收）
 30 分钟及更长稳定性：不在本轮执行
-长期离线超过 max_retries 后无人值守恢复：PENDING（必须由用户真实推流验收）
-恢复修复部署：PASS（2026-08-07 13:20:30 CST，gatewayd PID 580812，服务 active）
+长期离线超过 max_retries 后无人值守恢复：PASS（failures=11 后再经历完整 30 秒探测）
+恢复修复部署：PASS（2026-08-07 15:01:30 CST，gatewayd PID 945811，服务 active）
 部署一致性：PASS（已安装 gatewayd/diagnostic.html 与板端 staging SHA-256 一致）
 ```
 
@@ -1930,8 +1930,8 @@ ctest --test-dir build-tsan --output-on-failure
 4. 启动 PC 源脚本，不调用 HTTP start/restart、不重启任何板端服务。保存
    `FAILED -> PROBING -> STARTING -> RUNNING`、同一 gatewayd PID、新工作 PID、约 25 FPS、
    丢帧、CPU/RSS 和浏览器自动出现画面的证据。
-5. 在 PC 源脚本输入 `s` 只停止 FFmpeg，保持 PC MediaMTX；看到离线后输入 `r`，再次验证
-   新工作 PID和页面自动恢复。
+5. 在 PC 源脚本输入 `s` 并按回车，只停止 FFmpeg，保持 PC MediaMTX；看到离线后输入 `r`
+   并按回车，再次验证新工作 PID 和页面自动恢复。
 6. Ctrl+C 结束源脚本和 SSH 隧道，确认只清理本轮 PC 子进程且板端服务仍 active。
 
 当前记录：
@@ -1942,13 +1942,23 @@ Debug 完整 CTest：33/33 PASS
 Release 完整 CTest：33/33 PASS
 ASan/UBSan：33/33 PASS（detect_leaks=0，既有 ptrace 环境约束）
 TSan：适用 8/8 PASS
-板端新版部署：PENDING
-PC /dev/video0：PENDING（当前未连接）
+板端新版部署：PASS（staging 与已安装二进制/页面 SHA-256 一致）
+PC /dev/video0：PASS（MJPEG 1280x720@30 预检通过）
 FAILED 30 秒低频周期后后端恢复：PASS（gatewayd 580812 未变，worker 613691）
-重复停止/恢复 PC FFmpeg：PENDING
-真实浏览器 WebRTC+OSD 自动恢复：PENDING
+本轮长期 FAILED 后端恢复：PASS（gatewayd 945811 未变，worker 975340，约 25.11 FPS）
+重复停止/恢复 PC FFmpeg：PASS（worker 992453 -> 1007577，gatewayd 未重启）
+真实浏览器 WebRTC+OSD 自动恢复：PASS（用户确认无需刷新自动出现画面和新 PID 指标）
 30 分钟及更长稳定性：SKIPPED（不在本目标内）
 ```
+
+本轮精确时间线：15:04:36 failures=11 进入 FAILED；15:05:06 在一个完整 30 秒周期后再次
+探测并保持 FAILED；PC 输入随后上线，15:09:37 PROBING、15:09:40 probe_succeeded、
+15:09:43 worker 975340 RUNNING，gatewayd PID 始终为 945811。重复断流时 15:18:17 进入
+BACKOFF，15:18:34 再次 probe_succeeded，15:18:37 新 worker 1007577 RUNNING。恢复快照为
+H.264 1920x1080、约 25.87 FPS、丢帧 0、CPU 21.95%、RSS 16640 KiB。用户在浏览器确认
+两次均自动恢复画面和 OSD。稳定窗口后 consecutive_failures 清零，worker 1007577 保持
+RUNNING，约 25.11 FPS、丢帧 0。录像不含 OSD 与双 PC 双真实输入本轮未重复执行，保持 PENDING；
+30 分钟及更长长稳按范围 SKIPPED。
 
 首轮 ASan/UBSan 为 32/33：`gateway_publish_recovery_tests` 的固定 4 秒观察窗口在 sanitizer
 子进程启动开销下先超时，随后日志才出现预期第一次 BACKOFF，无 sanitizer 错误。现将观察

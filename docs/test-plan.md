@@ -1772,7 +1772,7 @@ ctest --test-dir build --output-on-failure \
 确定性 process_metrics 单元测试：PASS
 通道管理器进程指标与四线程快照测试：PASS
 相关常规 CTest：2/2 PASS
-ASan/UBSan：PENDING（OSD 功能完成后统一执行）
+ASan/UBSan：完整 31/31 PASS（最终 OSD 门禁）
 TSan：相关 2/2 PASS
 RK3588：PENDING
 结果：PASS（仅本增量常规测试）
@@ -1811,8 +1811,10 @@ ctest --test-dir build --output-on-failure \
 相关常规 CTest：5/5 PASS（含部署契约）
 回环说明：沙箱内 HTTP bind 被拒绝；允许本机回环后同组 5/5 PASS
 临时安装树：diagnostic.html 已安装且与源文件一致；从安装布局加载页面 PASS
-ASan/UBSan：PENDING（最终门禁）
-TSan：相关 4/4 PASS
+Debug 完整 CTest：31/31 PASS
+Release 完整 CTest：31/31 PASS
+ASan/UBSan：完整 31/31 PASS（LeakSanitizer 按既有 ptrace 限制关闭）
+TSan：适用 8/8 PASS
 结果：PASS（开发机相关常规测试）
 ```
 
@@ -1870,6 +1872,7 @@ http://127.0.0.1:9080/view/cam02
 断流与新 PID 恢复：PENDING
 录像不含 OSD：PENDING
 双 PC 双真实输入：PENDING
+连接审计：两次 SSH 到 192.168.1.45 均为 No route to host；未部署本次版本
 30 分钟及更长稳定性：不在本轮执行
 ```
 

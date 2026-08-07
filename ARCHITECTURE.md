@@ -119,6 +119,16 @@ FFmpeg 工作进程启用 `-progress pipe:1`，由 `gatewayd` 解析 `frame`、`
 
 标准错误流只用于错误诊断，不依赖不稳定的人类可读日志格式计算运行指标。
 
+### 5.5 按职责选择实现技术
+
+嵌入式 Linux 主线继续使用 C17：进程生命周期、状态机、信号、线程同步、`/proc` 采样、
+配置和 HTTP 控制都属于常驻服务核心，需要可预测的资源使用和清晰的系统调用边界。
+
+辅助功能不为“全项目统一 C”牺牲可读性。浏览器 OSD 使用独立的原生
+`web/diagnostic.html`，在同一个文件中包含 HTML、CSS 和 JavaScript，由 CMake 安装、
+由 C HTTP 路由提供；部署和验收脚本继续使用适合编排命令的 Bash。选择这些技术不会把
+Node、npm、Python 运行时或复杂前端框架引入板卡常驻路径。
+
 ## 6. 组件职责
 
 ### 6.1 gatewayd
@@ -174,7 +184,10 @@ FFmpeg 工作进程启用 `-progress pipe:1`，由 `gatewayd` 解析 `frame`、`
 - 采集 FFmpeg 输出帧率、码率、处理速度和丢帧数。
 - 从 `/proc/<pid>/stat` 和 `/proc/<pid>/status` 采集 CPU 时间与 RSS。
 - 记录运行时长、连续失败次数和总重启次数。
-- 第一版通过 HTTP JSON 输出，后续可增加 Prometheus 格式。
+- 使用独立周期线程每秒采样，CPU 百分比由同一 PID 的相邻 tick 和单调时钟增量计算。
+- PID 更换、进程消失或通道停止会清除基线和旧快照；HTTP 线程只复制已发布指标，不读取
+  `/proc`。
+- 通过 HTTP JSON 输出，后续可增加 Prometheus 格式。
 
 #### HTTP Control API
 
@@ -184,6 +197,8 @@ FFmpeg 工作进程启用 `-progress pipe:1`，由 `gatewayd` 解析 `frame`、`
 GET  /v1/health
 GET  /v1/channels
 GET  /v1/channels/{id}
+GET  /v1/channels/{id}/metrics
+GET  /view/{id}
 POST /v1/channels/{id}/start
 POST /v1/channels/{id}/stop
 POST /v1/channels/{id}/restart
@@ -192,6 +207,16 @@ POST /v1/channels/{id}/restart
 动态新增和删除通道不是第一版必须功能，优先通过配置文件管理。
 当前接口不提供身份认证，回环监听是第一版的安全边界；若需要跨主机访问，必须在
 gatewayd 外部增加认证、加密和网络访问控制。
+
+#### Browser Diagnostic View
+
+`/view/{id}` 返回项目安装的单文件原生 HTML/CSS/JavaScript。页面以 iframe 嵌入对应的
+MediaMTX WebRTC 页面，并用 DOM `textContent` 在左上角覆盖 gatewayd JSON 指标。视频和
+指标保持两个来源：MediaMTX 提供画面，gatewayd 提供状态、进度和 FFmpeg CPU/RSS。
+
+该页面不修改视频帧，不增加 FFmpeg 滤镜或编码步骤，也不会把 OSD 写入实时流或录像。
+它只是嵌入式诊断界面，不演变为用户、告警、录像管理或 AI 前端。页面每秒刷新；字段
+不可用时主动显示 `unavailable`，PID 更换时不得沿用旧进程数据。
 
 ### 6.2 FFmpeg-Rockchip Worker
 
@@ -282,6 +307,7 @@ STOPPED ---- start ----> PROBING ---- success ----> STARTING
 - 主线程：初始化、配置加载，通过 `signalfd` 同步消费 SIGHUP/SIGINT/SIGTERM，并协调
   服务退出。
 - 每通道 supervisor 线程：监督 ffprobe/FFmpeg 进程及 stdout/stderr 管道。
+- 指标采样线程：在 HTTP 路径之外周期读取各 FFmpeg 的 `/proc` 数据并发布小型快照。
 - HTTP 线程：处理本地控制和查询请求。
 
 进程控制信号在创建线程前统一屏蔽，因此不会在 supervisor 或 HTTP 线程执行异步信号
@@ -428,6 +454,9 @@ message
 ## 12. 安全边界
 
 - HTTP API 默认仅监听回环地址。
+- 诊断页同样服从回环边界；远程访问使用 SSH 隧道，不为演示修改默认监听地址。
+- HTML 是无通道插值的静态资源；动态 JSON 使用规范转义，页面只通过 `textContent` 写入
+  指标，并返回 CSP、`nosniff`、`no-store` 和 `no-referrer` 响应头。
 - 配置文件权限建议为 `0640`，凭据文件建议为 `0600`。
 - 通道 ID 只允许字母、数字、下划线和短横线。
 - 不允许用户配置直接形成 shell 命令。
@@ -456,6 +485,8 @@ rk3588-media-gateway/
 │   ├── monitor/               # progress、录像状态和 /proc 指标
 │   ├── api/                   # 本地 HTTP 状态与控制
 │   └── tools/                 # gateway-metrics CLI
+├── web/
+│   └── diagnostic.html        # 原生 HTML/CSS/JavaScript 诊断覆盖层
 ├── deploy/
 │   └── systemd/              # gatewayd/MediaMTX 单元、环境示例和 tmpfiles
 ├── scripts/

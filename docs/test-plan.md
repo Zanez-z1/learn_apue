@@ -1778,6 +1778,101 @@ RK3588：PENDING
 结果：PASS（仅本增量常规测试）
 ```
 
+### 8.10 实时 OSD：页面、指标 API 与短时实板验收
+
+#### 开发机自动化
+
+执行：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(channel_snapshot|http_server|http|channel_manager|deployment)_tests'
+```
+
+检查点：
+
+- `/view/cam01` 返回独立 `web/diagnostic.html`，Content-Type 为 HTML，并带 CSP、
+  no-store、nosniff 和 no-referrer。
+- `/v1/channels/cam01/metrics` 返回 JSON；不存在通道为 404，错误方法为 405。
+- 页面不插入通道字符串，只从已经过服务端通道存在性校验的 URL 路径读取 ID；指标更新
+  使用 `textContent`，JSON 引号、换行和控制字符正确转义。
+- 停止通道时 PID、输入、progress、CPU 和 RSS 为 null/unavailable；重启的新 PID 重新建立
+  CPU 基线，不显示旧帧数或旧进程资源。
+- 响应、日志和安装资源不包含 RTSP URL、密码、录像目录或开发机绝对路径。
+- 临时安装树包含 `share/rk-media-gateway/web/diagnostic.html`，且和仓库源文件一致。
+
+实际记录：
+
+```text
+日期：2026-08-07
+环境：开发机 Debug 构建
+相关常规 CTest：5/5 PASS（含部署契约）
+回环说明：沙箱内 HTTP bind 被拒绝；允许本机回环后同组 5/5 PASS
+临时安装树：diagnostic.html 已安装且与源文件一致；从安装布局加载页面 PASS
+ASan/UBSan：PENDING（最终门禁）
+TSan：相关 4/4 PASS
+结果：PASS（开发机相关常规测试）
+```
+
+#### RK3588 单路真实验收
+
+保持 `server.listen: 127.0.0.1`。PC 摄像头按本文件既有真实 RTSP 流程发布，板卡 systemd
+服务运行后，在 PC 建立：
+
+```bash
+ssh -N \
+  -L 9080:127.0.0.1:9080 \
+  -L 8889:127.0.0.1:8889 \
+  cat@192.168.1.45
+```
+
+浏览器打开 `http://127.0.0.1:9080/view/cam01`，并在另一个终端连续观察原始 JSON：
+
+```bash
+while true; do
+  curl -fsS http://127.0.0.1:9080/v1/channels/cam01/metrics
+  sleep 1
+done
+```
+
+必须实际确认：
+
+1. WebRTC 真实画面和左上角 OSD 同时可见；页面源代码没有视频 URL 或密码。
+2. 状态为 RUNNING，输入编码/分辨率正确，FPS、累计帧数、丢帧和 CPU/RSS 每秒刷新。
+3. 停止 PC 推流后显示 BACKOFF，当前 FFmpeg PID、progress 和 CPU/RSS 显示 unavailable。
+4. 恢复同一输入后出现不同的 FFmpeg PID 并回到 RUNNING，健康通道继续工作。
+5. 录制一小段后回放检查不包含 OSD，证明覆盖层没有写入视频帧。
+
+这是一轮短时功能验收，不运行 30 分钟及更长稳定性测试。浏览器截图可以作为人工可见
+证据，但必须同时保存脱敏 JSON、服务状态和精确时间段，不能只写“看起来正常”。
+
+#### 双真实输入
+
+条件允许时用两台 PC 分别发布两个真实摄像头源，启用 cam01/cam02，并同时打开：
+
+```text
+http://127.0.0.1:9080/view/cam01
+http://127.0.0.1:9080/view/cam02
+```
+
+停止其中一路后，仅对应页面允许进入 BACKOFF/unavailable；另一路画面和指标必须持续更新。
+恢复输入后检查故障路的新 PID。若验收时没有第二台 PC 或第二个真实摄像头，本项必须记录
+为 `PENDING`，不得用复制同一输入代替。
+
+当前实板记录：
+
+```text
+日期：2026-08-07
+单路真实画面与 OSD：PENDING
+指标实时刷新：PENDING
+断流与新 PID 恢复：PENDING
+录像不含 OSD：PENDING
+双 PC 双真实输入：PENDING
+30 分钟及更长稳定性：不在本轮执行
+```
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

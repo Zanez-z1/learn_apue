@@ -15,7 +15,7 @@ PC 摄像头 /dev/video0
   -> RK3588 gatewayd：探测输入、创建并监督 FFmpeg-Rockchip
   -> MPP 解码 -> RGA 缩放/转换 -> MPP 编码
   -> 板卡 MediaMTX：接收 cam01，负责 WebRTC、RTSP、录像和回放
-  -> PC 浏览器：http://BOARD_IP:8889/cam01
+  -> PC 浏览器：MediaMTX 画面 + gatewayd 浏览器 OSD
 ```
 
 `gatewayd` 不采集 PC 摄像头，也不实现 H.264、RTSP 或 WebRTC。它负责配置、状态机、
@@ -173,8 +173,34 @@ export CAM01_RTSP_URL='rtsp://192.168.1.16:8554/source'
 http://192.168.1.45:8889/cam01
 ```
 
-这是 MediaMTX 提供的播放页面，不是本项目自行开发的管理前端。当前项目确实还没有统一
-的可视化管理页面。
+这是 MediaMTX 自带的原始播放页面。项目另提供轻量诊断页，但不把它扩展成复杂的监控
+管理前端。
+
+### 6.2 带 OSD 的诊断页面
+
+保持 gatewayd 的 `9080` 回环监听，不要为了演示改为局域网地址。在 PC-3 建立两个 TCP
+转发：
+
+```bash
+ssh -N \
+  -L 9080:127.0.0.1:9080 \
+  -L 8889:127.0.0.1:8889 \
+  cat@192.168.1.45
+```
+
+然后在 PC 浏览器打开：
+
+```text
+http://127.0.0.1:9080/view/cam01
+```
+
+页面中的视频 iframe 来自 MediaMTX `8889`，左上角状态、PID、输入格式、FPS、码率、帧数、
+丢帧、失败/重启次数以及 FFmpeg CPU/RSS 来自 gatewayd，并每秒读取一次
+`/v1/channels/cam01/metrics`。某项没有当前样本时显示 `unavailable`，不会保留上一 PID 的
+旧值。
+
+OSD 是独立的原生 HTML/CSS/JavaScript 浏览器覆盖层，不经过 FFmpeg，不改变 MPP/RGA
+链路，不写入视频或录像。它只用于诊断，不提供用户、告警、录像管理或 AI 功能。
 
 板卡 RTSP 默认只监听回环地址。如需在 PC 用 ffplay 验证，先建立隧道：
 
@@ -188,7 +214,7 @@ ssh -N -L 8554:127.0.0.1:8554 cat@192.168.1.45
 ffplay -rtsp_transport tcp rtsp://127.0.0.1:8554/cam01
 ```
 
-### 6.2 HTTP 状态
+### 6.3 HTTP 状态
 
 示例配置让 `gatewayd` HTTP 只监听板卡回环地址。可直接从 PC 通过 SSH 执行板卡命令：
 
@@ -197,11 +223,13 @@ ssh cat@192.168.1.45 'curl -fsS http://127.0.0.1:9080/v1/health'
 ssh cat@192.168.1.45 'curl -fsS http://127.0.0.1:9080/v1/channels'
 ssh cat@192.168.1.45 \
   'curl -fsS http://127.0.0.1:9080/v1/channels/cam01'
+ssh cat@192.168.1.45 \
+  'curl -fsS http://127.0.0.1:9080/v1/channels/cam01/metrics'
 ```
 
 健康状态应为 `ok`，通道应为 `RUNNING`，`frame` 应继续增长。API 不返回输入 URL 或密码。
 
-如果需要在 PC 连续查询，可建立隧道：
+如果只需要在 PC 连续查询 JSON，可只转发 `9080`：
 
 ```bash
 ssh -N -L 9080:127.0.0.1:9080 cat@192.168.1.45
@@ -243,19 +271,35 @@ sudo find /var/lib/rk-media-gateway/recordings/cam01 \
 2. 观察 Board-1：工作进程退出，通道进入 `BACKOFF`。
 3. 再次执行第 3.3 节的 PC 推流命令。
 4. 观察板卡重新探测并创建新的 FFmpeg，通道回到 `RUNNING`。
-5. 浏览器重新出现画面。
+5. 诊断页应先显示 `BACKOFF` 和实时字段 `unavailable`，恢复后显示新 FFmpeg PID、更新的
+   CPU/RSS 和重新出现的画面。
 
 网关重启的是板卡上的 FFmpeg 工作进程，不是远程摄像头。摄像头完全死机时仍需要摄像头
 自身看门狗、ONVIF/厂商重启接口或可管理 PoE 供电设备。
+
+### 7.4 双路真实输入（有第二台 PC 时）
+
+第二台 PC 使用不同路径发布真实摄像头，例如 `source2`，并在板卡配置中启用 `cam02`，其
+输入指向第二台 PC、输出路径为 `cam02`。重载或重启 gatewayd 后同时打开：
+
+```text
+http://127.0.0.1:9080/view/cam01
+http://127.0.0.1:9080/view/cam02
+```
+
+停止其中一台 PC 的推流，只允许对应页面进入 `BACKOFF/unavailable`；另一页必须继续
+`RUNNING` 且指标增长。没有第二台 PC 或第二个真实源时必须把这项记录为 `PENDING`，不能
+用同一路复制流冒充双真实输入验收。
 
 ## 8. 五分钟求职演示顺序
 
 不要从 YAML 或测试数量讲起。按以下顺序能让观看者先看到结果，再理解技术：
 
 1. 用 30 秒展示第 1 节的数据流，说明哪些代码属于本项目。
-2. 打开 WebRTC 页面，证明真实画面经过 RK3588 转码后可播放。
-3. 查询 `/v1/channels/cam01`，指出 PID、FPS、帧数、重启数和状态。
-4. 停止 PC 推流，展示 `RUNNING -> BACKOFF`；恢复推流，展示新 PID 和画面恢复。
+2. 打开 `/view/cam01`，同时展示真实 WebRTC 画面和浏览器 OSD。
+3. 指出 OSD 的画面来自 MediaMTX、指标来自 gatewayd，并说明它不会烧入录像。
+4. 停止 PC 推流，展示 `RUNNING -> BACKOFF/unavailable`；恢复推流，展示新 PID、指标和
+   画面恢复。
 5. 调用通道 `restart`，说明单通道生命周期控制不会重启整个网关。
 6. 展示 [性能测试结果](benchmark-results.md) 中软件与 MPP/RGA 的实测 CPU/RSS 对比。
 
@@ -288,6 +332,7 @@ pgrep -a mediamtx
 | `Address already in use` | 旧服务或另一个实例占用 9080/8554 | `systemctl status` 和 `ss -ltnp` |
 | 找不到 `h264_rkmpp` | 使用了 Debian 标准 FFmpeg | `./scripts/check_media_env.sh` |
 | 浏览器打不开 8889 | MediaMTX 未运行、地址错误或防火墙阻止 | `systemctl status mediamtx` |
+| `/view/cam01` 有 OSD 但无画面 | 只转发了 9080，或 WebRTC/ICE 不可达 | 同时转发 8889，并检查 MediaMTX WebRTC 日志和 8189 网络可达性 |
 | `/dev/video0` 不存在 | PC 摄像头节点不同或未启用 | `ls -l /dev/video*` |
 | 录像目录权限不足 | 文件属于专用服务账号 | 只用 `sudo find` 检查，不放宽整个目录权限 |
 | 前台新版和 systemd 行为不同 | systemd 仍使用 `/usr/local/bin/gatewayd` | 理解第 4 节“编译和安装”的区别 |
@@ -302,5 +347,6 @@ pgrep -a mediamtx
 - 非 root systemd 生命周期与 31/31 板卡 CTest。
 - 时间戳短测的稳定 RTSP 画面年龄约 `1.25 ± 0.5s`。
 
-没有完成双真实摄像头、音频、30 分钟及更长稳定性测试，也没有自行开发 Web 管理页面。
-详细证据和限制见 [测试与验收指南](test-plan.md)、[性能测试结果](benchmark-results.md)。
+轻量 OSD 的新一轮 RK3588 实板验收记录见测试文档；双真实摄像头在没有第二个真实源时
+保持 `PENDING`。项目不包含音频、30 分钟及更长稳定性测试或复杂 Web 管理前端。详细证据
+和限制见 [测试与验收指南](test-plan.md)、[性能测试结果](benchmark-results.md)。

@@ -122,6 +122,7 @@ IPv6 地址；如不需要控制面，可设置 `server.enabled: false`。
 curl http://127.0.0.1:9080/v1/health
 curl http://127.0.0.1:9080/v1/channels
 curl http://127.0.0.1:9080/v1/channels/cam01
+curl http://127.0.0.1:9080/v1/channels/cam01/metrics
 curl http://127.0.0.1:9080/v1/recording
 curl -X POST http://127.0.0.1:9080/v1/channels/cam01/stop
 curl -X POST http://127.0.0.1:9080/v1/channels/cam01/start
@@ -130,6 +131,21 @@ curl -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
 
 查询接口只接受 GET，控制接口只接受 POST。成功接受控制命令时返回 202；通道不存在
 返回 404；命令与当前状态冲突返回 409。接口不返回输入 URL 或密码。
+
+每路通道还有一个轻量诊断页面。它使用原生 HTML/CSS/JavaScript，在浏览器中把
+gatewayd 指标覆盖到 MediaMTX WebRTC 画面上方；OSD 不修改或重新编码视频，也不会写入
+录像。由于 gatewayd 默认只监听回环地址，推荐从 PC 同时转发诊断页和 WebRTC HTTP 端口：
+
+```bash
+ssh -N \
+  -L 9080:127.0.0.1:9080 \
+  -L 8889:127.0.0.1:8889 \
+  cat@BOARD_IP
+```
+
+然后打开 `http://127.0.0.1:9080/view/cam01`；第二路对应 `/view/cam02`。页面只是嵌入式
+诊断界面，不是带用户、告警或录像管理功能的复杂监控前端。画面由 MediaMTX 提供，状态、
+FPS、帧数、丢帧、重启计数和 FFmpeg CPU/RSS 由 gatewayd 提供并每秒刷新。
 
 当前 HTTP 服务没有身份认证，默认回环监听是安全边界，不应直接暴露到不受信任的网络。
 监听地址、端口和启用状态的修改需要重启 `gatewayd`，不会通过 SIGHUP 生效。

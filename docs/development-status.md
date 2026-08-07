@@ -639,6 +639,22 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 2026-08-07 开发机相关常规测试 2/2、对应 TSan 2/2 PASS；完整 CTest 和
   ASan/UBSan 在 OSD 页面增量完成后统一执行。本增量尚未进行 RK3588 验收。
 
+### 实时 OSD 增量 2：原生浏览器诊断页与指标 API
+
+- 新增 `GET /v1/channels/{id}/metrics`，只输出通道 ID、状态、当前 FFmpeg PID、探测与
+  progress 数据、失败/重启计数和后台 CPU/RSS 快照；不返回输入 URL、密码、录像目录或
+  其他文件系统路径。停止、退避和 PID 切换期间的实时字段使用 null/unavailable。
+- 新增 `GET /view/{id}`。页面是独立的 `web/diagnostic.html`，使用原生 HTML/CSS/
+  JavaScript 和 MediaMTX iframe，每秒刷新 JSON；没有 Node/npm、CDN 或前端框架。
+  C17 只负责安全路由、静态文件返回和嵌入式主线逻辑，不再用 C 字符串拼接页面。
+- OSD 是浏览器透明覆盖层，不经过 FFmpeg，不改变 MPP/RGA、编码、实时流或录像。页面是
+  轻量嵌入式诊断工具，不是复杂监控管理平台。
+- 页面响应包含 CSP、no-store、nosniff 和 no-referrer；通道 ID 不插入 HTML，JSON 使用
+  有界转义，浏览器只用 `textContent` 更新字段。
+- 2026-08-07 开发机页面/路由、JSON、停止 unavailable、PID 恢复、静态资源和转义相关
+  常规 5/5、适用 TSan 4/4 PASS。HTTP 端到端在受限沙箱首次因回环 bind 被拒绝，获准在本机
+  回环复跑后通过；临时安装布局加载页面也通过。完整 ASan/UBSan 与 RK3588 实板仍待执行。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -659,7 +675,8 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的有限退避及自动恢复。
 - systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
 - 可安装的 C17 进程指标采样工具及原始/汇总 CSV 输出。
-- gatewayd 后台采样每路 FFmpeg CPU/RSS 并发布并发安全快照；尚未接入诊断页面。
+- gatewayd 后台采样每路 FFmpeg CPU/RSS，并通过轻量浏览器诊断页显示 WebRTC 画面和
+  一秒刷新 OSD。
 
 当前限制：
 

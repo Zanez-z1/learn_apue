@@ -1,10 +1,20 @@
 # RK3588 Media Gateway
 
-运行在 RK3588 嵌入式 Linux 上的硬件加速视频转码与流媒体网关。自行开发的
-`gatewayd` 使用 C17；FFmpeg-Rockchip 负责 MPP/RGA 媒体处理，MediaMTX 负责
-RTSP、WebRTC 和 HLS 分发。
+运行在 RK3588 嵌入式 Linux 上的硬件加速视频转码与任务管理服务。自行开发的
+`gatewayd` 使用 C17 管理 RTSP 通道和 FFmpeg 子进程；FFmpeg-Rockchip 负责
+MPP/RGA 媒体处理，MediaMTX 负责 RTSP/WebRTC 分发、录像和回放。
 
-当前处于开发阶段，已经具备：
+最短的数据流是：
+
+```text
+RTSP 输入 -> gatewayd 监督的 FFmpeg-Rockchip -> MPP/RGA -> MediaMTX -> 浏览器/播放器
+```
+
+这个项目的重点不是重新做一个摄像头 App，而是在真实 RK3588 上实现 Linux C 服务、
+子进程监督、单通道故障隔离、配置热重载、硬件媒体链路和可复现测试。当前没有自行开发
+Web 管理前端、音频或 AI。
+
+当前 Phase 5 软件与短时实板范围已经完成，具备：
 
 - YAML 配置读取、环境变量展开及边界校验。
 - RTSP URL 密码脱敏。
@@ -32,8 +42,35 @@ Phase 5 已完成短时软硬件性能、分辨率、码率、重复固定样本
 | --- | --- | --- |
 | `gatewayd`、`gateway-metrics`、测试脚本 | 本项目 | 配置、状态机、进程监督、HTTP 控制、指标与验收 |
 | FFmpeg-Rockchip、MPP、RGA | 上游项目 | 视频解码、缩放、格式转换和编码 |
-| MediaMTX | 上游项目 | RTSP/WebRTC/HLS 分发、录像和回放 |
+| MediaMTX | 上游项目 | RTSP/WebRTC 分发、录像和回放 |
 | systemd 单元和示例配置 | 本项目 | 非 root 服务编排和安全边界 |
+
+## 第一次应该看哪里
+
+不要从 1700 多行的测试记录开始。按你的目标选择入口：
+
+| 目标 | 从这里开始 |
+| --- | --- |
+| 第一次跑出 PC 摄像头画面 | [从零跑通与演示完整视频链路](docs/demo.md) |
+| 逐层理解源码 | [源码阅读与面试准备路线](docs/code-reading-guide.md) |
+| 前台测试通过后安装为 systemd 服务 | [systemd 部署指南](docs/deployment.md) |
+| 查看设计取舍和状态机 | [架构设计](ARCHITECTURE.md) |
+| 复现测试或查验收证据 | [测试与验收指南](docs/test-plan.md) |
+| 查看 CPU、RSS、吞吐和延迟数据 | [性能测试结果](docs/benchmark-results.md) |
+
+第一次运行只需要 `docs/demo.md`。`docs/test-plan.md` 和 `docs/development-status.md` 是
+开发证据，不是入门教程。
+
+## 五分钟能展示什么
+
+1. 浏览器播放经 RK3588 MPP/RGA 转码后的真实画面。
+2. HTTP 查询通道 PID、状态、FPS、帧数和重启次数。
+3. 停止 PC RTSP 源，展示通道退避；恢复源后展示新 FFmpeg PID 和画面恢复。
+4. 单独停止、启动或重启 `cam01`，网关和其他通道无需整体重启。
+5. 展示固定样本下软件路径与 MPP/RGA 的 CPU、RSS 和吞吐实测。
+
+完整命令和每个终端的职责见 `docs/demo.md`。求职时应展示这条工程链路，不应把项目描述
+成比成熟摄像头 App 功能更多的消费级监控产品。
 
 ## 构建
 
@@ -99,8 +136,8 @@ curl -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
 `gatewayd` 默认保持常驻，即使所有通道均已停止也可通过接口重新启动；仅批处理场景可
 使用 `--exit-when-idle` 让程序在全部通道结束后退出。
 
-从服务启动、RTSP/WebRTC 播放、HTTP 控制到录像和故障恢复的完整使用流程见
-[完整视频链路演示指南](docs/demo.md)。
+从 PC 摄像头推流、板卡编译和前台运行，到 RTSP/WebRTC 播放、HTTP 控制、录像和故障
+恢复的完整流程见 [从零跑通与演示完整视频链路](docs/demo.md)。
 
 ## MediaMTX 录像配置
 

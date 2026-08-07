@@ -663,8 +663,11 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 
 ## 7. 文档职责
 
-- `README.md`：用户安装、配置和运行方法。
+- `README.md`：项目入口、能力边界和文档导航。
+- `docs/demo.md`：第一次运行、完整视频链路和五分钟演示。
+- `docs/code-reading-guide.md`：按依赖顺序理解源码和准备面试。
+- `docs/deployment.md`：前台验证通过后的非 root systemd 部署。
 - `ARCHITECTURE.md`：架构、模块职责、阶段与最终验收标准。
 - `docs/test-plan.md`：开发者可重复执行的测试和实际验收记录。
 - `docs/development-status.md`：当前进度、关键约定、提交和下一步。
-- `docs/benchmark-results.md`：后续记录可复现的性能数据。
+- `docs/benchmark-results.md`：可复现的性能数据和适用边界。

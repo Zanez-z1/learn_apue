@@ -1,9 +1,38 @@
 # systemd 部署指南
 
-本文面向部署人员。以下步骤不会替代 RK3588、FFmpeg-Rockchip、真实 RTSP 和
-MediaMTX 的实机验收。
+本文说明如何把已验证的构建安装为长期运行的非 root systemd 服务。全新板卡先完成
+第 1～3 节，再回到 [从零跑通与演示完整视频链路](demo.md) 做前台验证；验证通过后才
+执行第 4 节启用服务。已经部署过 MediaMTX 的开发板，可以先按演示文档运行
+`./build/gatewayd`，不需要每次重新安装。
 
-## 1. 安装程序和服务文件
+## 1. 部署前提和外部组件
+
+本仓库不会构建或安装 FFmpeg-Rockchip、Rockchip MPP/RGA 和 MediaMTX。开始前确认：
+
+```bash
+cmake --version
+pkg-config --modversion yaml-0.1
+command -v ffmpeg
+command -v ffprobe
+command -v mediamtx
+ffmpeg -hide_banner -decoders | grep h264_rkmpp
+ffmpeg -hide_banner -encoders | grep h264_rkmpp
+ffmpeg -hide_banner -filters | grep scale_rkrga
+```
+
+项目要求 CMake 3.20 及以上、C17 编译器、libyaml 开发包、FFmpeg-Rockchip 和与板卡架构
+匹配的 MediaMTX。Debian 标准 FFmpeg 不包含 `h264_rkmpp`/`scale_rkrga`，不能替代。
+MediaMTX 示例配置按 v1.20 验证；其他版本应先检查配置字段兼容性。
+
+外部组件就绪后执行：
+
+```bash
+./scripts/check_media_env.sh
+```
+
+环境脚本失败时先解决 MPP/RGA/DRM 设备权限或媒体软件问题，不要继续排查 `gatewayd`。
+
+## 2. 安装本项目程序和服务文件
 
 在目标板卡安装编译依赖并构建：
 
@@ -27,7 +56,10 @@ sudo systemd-tmpfiles --create /usr/local/lib/tmpfiles.d/rk-media-gateway.conf
 封闭设备策略中显式放行 RK3588 使用的 MPP、RGA、DMA heap、DRM card0 和 renderD128；
 如果板卡节点名称不同，应按实际节点修改 `DeviceAllow`，不能直接关闭全部设备隔离。
 
-## 2. 安装配置与凭据
+`cmake --install` 安装的是 `gatewayd`、`gateway-metrics`、systemd 单元、文档和脚本；
+不会替你下载外部媒体组件，也不会覆盖 `/etc/rk-media-gateway` 中的真实配置。
+
+## 3. 安装配置与凭据
 
 ```bash
 sudo install -d -m 0750 -o root -g rk-media-gateway /etc/rk-media-gateway
@@ -44,7 +76,7 @@ sudoedit /etc/rk-media-gateway/gateway.env
 的凭据提交到 Git。修改录像参数或通道输出路径后，在受控 shell 中加载环境变量并执行
 `gatewayd --print-mediamtx-config`，检查输出后再以 0640 权限替换 `mediamtx.yml`。
 
-## 3. 启动和重载
+## 4. 启动和重载
 
 先检查配置：
 
@@ -79,7 +111,7 @@ sudo systemctl restart mediamtx.service
 sudo systemctl restart rk-media-gateway.service
 ```
 
-## 4. 优雅停止与故障恢复
+## 5. 优雅停止与故障恢复
 
 ```bash
 sudo systemctl stop rk-media-gateway.service
@@ -93,7 +125,7 @@ systemd 向 gatewayd 发送 SIGTERM。gatewayd 先通知并回收每个 supervis
 再停止 HTTP 线程并退出；`KillMode=control-group` 和 `TimeoutStopSec=20s` 是异常路径的
 兜底。正常退出不会触发 `Restart=on-failure`，异常退出会在 5 秒后恢复。
 
-## 5. 服务安全边界
+## 6. 服务安全边界
 
 - gatewayd、MediaMTX 使用同一非 root 账号，以便共享录像目录。
 - `ProtectSystem=strict`，只有 `/var/lib/rk-media-gateway` 可写。

@@ -8,7 +8,10 @@
 
 ## 2. 项目定位
 
-本项目实现一个运行在嵌入式 Linux 上的视频转码与流媒体网关。系统接入本地文件、USB 摄像头或 RTSP 网络视频流，利用 RK3588 的 MPP 和 RGA 完成硬件解码、图像缩放、格式转换和硬件编码，再通过 MediaMTX 对外提供 RTSP、WebRTC 或 HLS 播放能力。
+本项目实现一个运行在嵌入式 Linux 上的视频转码与流媒体网关。当前 `gatewayd` 接入
+RTSP 网络视频流，利用 RK3588 的 MPP 和 RGA 完成硬件解码、图像缩放、格式转换和硬件
+编码，再通过 MediaMTX 提供 RTSP、WebRTC、录像和回放。USB 摄像头只作为开发机测试源，
+先由外部 FFmpeg/MediaMTX 转成 RTSP；本地文件和 V4L2 不是当前 `gatewayd` 输入类型。
 
 项目的主体不是重新实现编解码器或流媒体协议，而是自行开发一个 C17 网关管理服务 `gatewayd`，负责：
 
@@ -61,9 +64,9 @@ systemd/信号 ------>| Process Manager                |
                                Data Plane
 +----------------+       +-------------------------+
 | RTSP 摄像机     |------>|                         |
-| PC 测试推流     |------>| FFmpeg-Rockchip Worker |
-| USB 摄像头      |------>|                         |
-| 本地视频文件    |------>| MPP Decode              |
+| PC RTSP 测试源  |------>| FFmpeg-Rockchip Worker |
+| 其他 RTSP 服务  |------>|                         |
+| NVR/视频平台    |------>| MPP Decode              |
 +----------------+       | RGA Scale/Convert       |
                          | MPP Encode              |
                          +------------+------------+
@@ -73,7 +76,7 @@ systemd/信号 ------>| Process Manager                |
                                       v
                          +------------+------------+
                          |        MediaMTX         |
-                         | RTSP / WebRTC / HLS     |
+                         | RTSP / WebRTC           |
                          | Record / Playback       |
                          +------------+------------+
                                       |
@@ -233,7 +236,7 @@ ffmpeg \
 ### 6.3 MediaMTX
 
 - 接收 FFmpeg 发布的本地 RTSP 流。
-- 为客户端提供 RTSP、WebRTC 和 HLS 输出。
+- 为客户端提供 RTSP 和 WebRTC 输出；当前生成配置显式关闭未使用的 HLS。
 - 按配置进行分段录像和历史回放。
 - 提供路径状态和运行指标，供后续健康检查使用。
 
@@ -445,27 +448,30 @@ rk3588-media-gateway/
 │   └── gateway/
 ├── src/
 │   ├── main.c                 # CLI、配置入口和进程级信号处理
-│   ├── config/
-│   ├── channel/               # 状态机、supervisor 和多通道管理器
-│   ├── pipeline/
-│   ├── process/
-│   ├── monitor/
-│   ├── metrics/
-│   ├── api/
-│   └── logging/
+│   ├── config/                # YAML 加载和 MediaMTX 配置生成
+│   ├── channel/               # 状态机、supervisor、快照和多通道管理器
+│   ├── pipeline/              # FFmpeg argv 构造
+│   ├── process/               # 子进程创建、轮询、停止和回收
+│   ├── probe/                 # ffprobe 输入探测
+│   ├── monitor/               # progress、录像状态和 /proc 指标
+│   ├── api/                   # 本地 HTTP 状态与控制
+│   └── tools/                 # gateway-metrics CLI
 ├── deploy/
 │   └── systemd/              # gatewayd/MediaMTX 单元、环境示例和 tmpfiles
 ├── scripts/
 │   ├── check_media_env.sh
-│   ├── run_test_source.sh
-│   └── benchmark.sh
+│   ├── run_transcode_benchmark.sh
+│   └── run_capacity_benchmark.sh
 ├── tests/
 │   ├── unit/
 │   └── integration/
 └── docs/
+    ├── demo.md
+    ├── code-reading-guide.md
     ├── deployment.md
     ├── test-plan.md
-    └── benchmark-results.md
+    ├── benchmark-results.md
+    └── development-status.md
 ```
 
 ## 14. 开发阶段
@@ -531,7 +537,7 @@ rk3588-media-gateway/
 
 ### 15.1 功能测试
 
-- 本地文件输入转码成功。
+- 固定本地文件可通过独立基准脚本完成软硬件转码对比；这不是 `gatewayd` 输入类型。
 - RTSP 输入转码成功。
 - RTSP、WebRTC 输出可播放。
 - 启动、停止和重启接口有效。
@@ -585,7 +591,7 @@ rk3588-media-gateway/
 - 部署说明。
 - 故障注入与稳定性测试记录。
 - 软硬件转码性能对比报告。
-- 一段完整演示视频或截图。
+- 一份可复现的完整演示指南；作为公开作品集时，再附一段短视频或至少一张真实画面截图。
 
 ## 17. 简历完成条件
 
@@ -600,6 +606,12 @@ rk3588-media-gateway/
 7. GitHub README 能清楚区分开源依赖和自行实现的模块。
 
 简历中可以使用的数据必须来自测试记录，不能提前填写未经验证的通道数、CPU 降幅、延迟或稳定运行时间。
+
+截至 2026-08-06，上述 1～7 项已有代码、测试和实板记录支撑，因此项目在技术证据上可以
+写入简历。但“技术完成”不等于“面试就绪”：项目所有者还应按 `docs/demo.md` 独立完成
+一次五分钟演示，按 `docs/code-reading-guide.md` 讲清启动、断流恢复、热重载和停止四条
+流程，并为公开仓库补充真实画面截图或短视频。在此之前，不应把无法解释的实现细节写成
+个人熟练掌握的能力。
 
 ## 18. 上游项目
 

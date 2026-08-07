@@ -44,8 +44,8 @@ git status --short --branch
 
 ## 3. 当前阶段
 
-当前阶段：实时视频 OSD 监控，状态为 `IN PROGRESS`。开发机实现和动态门禁已完成；
-RK3588 新版本部署与短时真实验收尚未完成。双真实输入在没有第二个真实源时保持
+当前阶段：实时视频 OSD 监控，状态为 `IN PROGRESS`。开发机实现、动态门禁和 RK3588
+部署已完成；PC 摄像头当前未连接，短时真实画面与恢复验收尚未完成。双真实输入保持
 `PENDING`；本轮不执行 30 分钟及更长长稳，音频仍是排除范围。
 
 当前开发机测试基线：
@@ -77,7 +77,7 @@ MediaMTX：v1.20.0 linux arm64
 板卡完整 CTest：31/31 PASS
 Phase 0、1、2、4：按当前单路和 5 分钟以上实机范围 PASS
 Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入板卡验收未执行
-实时 OSD：尚未部署本次版本，不能沿用 2026-08-06 的旧画面验收
+实时 OSD：Release 31/31 与 systemd 部署 PASS；真实画面、在线指标和恢复仍 PENDING
 限制：无音频；未执行 30 分钟长稳
 ```
 
@@ -666,6 +666,23 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 尝试只读连接 `cat@192.168.1.45` 两次均返回 `No route to host`。开发机仍为
   `192.168.1.16/24`，到目标的路由选择为 Wi-Fi 接口，因此没有在板卡离线时伪造部署、
   真实画面、OSD、断流恢复或录像验收；这些项目继续保持 PENDING。
+
+### 实时 OSD 增量 4：RK3588 部署与离线源状态验收
+
+- 连接恢复后先确认目标为 `lubancat`、aarch64、用户 `cat` 和预期项目目录。板卡原源码
+  目录没有 Git，因此没有直接覆盖；使用独立
+  `/home/cat/rk3588-media-gateway-osd-20260807` staging 解包提交快照、Release 构建和测试。
+- 板卡 GCC 10.2.1、CMake 3.31.10 构建无警告，完整 Release CTest 31/31 PASS。安装前已
+  将旧 gatewayd 备份为 staging 下 `gatewayd.pre-osd`。
+- 用户级 CMake 在 sudo 环境首次因 Python 模块路径缺失而退出，未写安装文件；随后使用
+  系统 CMake 3.18 执行已由 3.31 生成的安装脚本成功。安装包含 gatewayd、gateway-metrics
+  和 `/usr/local/share/rk-media-gateway/web/diagnostic.html`，未改 `/etc` 真实配置或凭据。
+- systemd 重载并重启后 gatewayd PID 从 951 变为 15969，gatewayd 和 MediaMTX 均 active。
+  `/view/cam01` 返回 HTTP 200、HTML Content-Type、CSP/no-store/nosniff/no-referrer；板卡
+  页面 SHA-256 与开发机源文件一致。
+- PC 当前没有 `/dev/video*`、MediaMTX 或 FFmpeg 推流进程，通道真实报告 BACKOFF。
+  指标 API 将 PID、输入、progress、CPU 和 RSS 全部报告 unavailable，证明离线时不保留
+  过期值；不能据此宣称真实画面、RUNNING 指标、浏览器同屏或恢复验收通过。
 
 ## 5. 当前能力边界
 

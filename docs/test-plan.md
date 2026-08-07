@@ -1872,7 +1872,10 @@ http://127.0.0.1:9080/view/cam02
 断流与新 PID 恢复：PENDING
 录像不含 OSD：PENDING
 双 PC 双真实输入：PENDING
-连接审计：两次 SSH 到 192.168.1.45 均为 No route to host；未部署本次版本
+连接审计：初次两次 No route to host；连接恢复后完成 staging 构建、31/31 和 systemd 部署
+离线输入：BACKOFF；PID、输入、progress、CPU、RSS 均为 unavailable，符合预期
+页面静态验收：HTTP 200、Content-Type/CSP/no-store/nosniff/no-referrer PASS
+页面资源：板卡与开发机 SHA-256 一致
 30 分钟及更长稳定性：不在本轮执行
 ```
 

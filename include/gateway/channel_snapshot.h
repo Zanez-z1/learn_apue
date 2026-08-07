@@ -4,6 +4,7 @@
 /* Read-only channel status model for observers and future control APIs. */
 
 #include "gateway/channel_state.h"
+#include "gateway/process_metrics.h"
 #include "gateway/probe.h"
 #include "gateway/progress_parser.h"
 
@@ -35,6 +36,7 @@ typedef struct {
     gw_probe_info probe;
     bool has_progress;
     gw_worker_progress progress;
+    gw_process_metrics_snapshot worker_metrics;
 } gw_channel_snapshot;
 
 void gw_channel_snapshot_init(gw_channel_snapshot *snapshot,

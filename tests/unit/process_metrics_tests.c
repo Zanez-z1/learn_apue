@@ -60,11 +60,73 @@ static void test_live_process(void)
     CHECK(gw_process_metrics_read(getpid(), NULL) != 0);
 }
 
+static void test_cpu_tracker(void)
+{
+    gw_process_metrics_tracker tracker;
+    gw_process_metrics_snapshot snapshot;
+    gw_process_metrics metrics = {
+        .cpu_ticks = 100U,
+        .rss_kib = 4096L,
+        .fd_count = 7U,
+    };
+
+    gw_process_metrics_tracker_init(&tracker);
+    gw_process_metrics_tracker_update(&tracker, (pid_t)101, &metrics,
+                                      INT64_C(1000000000), 100L, &snapshot);
+    CHECK(snapshot.available);
+    CHECK(!snapshot.cpu_available);
+    CHECK(snapshot.pid == (pid_t)101);
+    CHECK(snapshot.rss_kib == 4096L);
+    CHECK(snapshot.fd_count == 7U);
+
+    metrics.cpu_ticks = 150U;
+    metrics.rss_kib = 5120L;
+    gw_process_metrics_tracker_update(&tracker, (pid_t)101, &metrics,
+                                      INT64_C(2000000000), 100L, &snapshot);
+    CHECK(snapshot.cpu_available);
+    CHECK(snapshot.cpu_percent > 49.99 && snapshot.cpu_percent < 50.01);
+    CHECK(snapshot.rss_kib == 5120L);
+
+    metrics.cpu_ticks = 10U;
+    metrics.rss_kib = 2048L;
+    gw_process_metrics_tracker_update(&tracker, (pid_t)202, &metrics,
+                                      INT64_C(3000000000), 100L, &snapshot);
+    CHECK(snapshot.available);
+    CHECK(!snapshot.cpu_available);
+    CHECK(snapshot.pid == (pid_t)202);
+
+    metrics.cpu_ticks = 35U;
+    gw_process_metrics_tracker_update(&tracker, (pid_t)202, &metrics,
+                                      INT64_C(4000000000), 100L, &snapshot);
+    CHECK(snapshot.cpu_available);
+    CHECK(snapshot.cpu_percent > 24.99 && snapshot.cpu_percent < 25.01);
+
+    gw_process_metrics_tracker_update(&tracker, (pid_t)202, NULL,
+                                      INT64_C(5000000000), 100L, &snapshot);
+    CHECK(!snapshot.available);
+    CHECK(!snapshot.cpu_available);
+    CHECK(snapshot.rss_kib == 0L);
+    CHECK(snapshot.fd_count == 0U);
+
+    metrics.cpu_ticks = 40U;
+    gw_process_metrics_tracker_update(&tracker, (pid_t)202, &metrics,
+                                      INT64_C(6000000000), 100L, &snapshot);
+    CHECK(snapshot.available);
+    CHECK(!snapshot.cpu_available);
+
+    metrics.cpu_ticks = 30U;
+    gw_process_metrics_tracker_update(&tracker, (pid_t)202, &metrics,
+                                      INT64_C(7000000000), 100L, &snapshot);
+    CHECK(snapshot.available);
+    CHECK(!snapshot.cpu_available);
+}
+
 int main(void)
 {
     test_stat_parser();
     test_status_parser();
     test_live_process();
+    test_cpu_tracker();
 
     if (failures != 0) {
         fprintf(stderr, "%d process metrics test(s) failed\n", failures);

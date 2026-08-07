@@ -22,6 +22,7 @@ void gw_channel_snapshot_init(gw_channel_snapshot *snapshot,
     snapshot->state = channel->enabled ? GW_CHANNEL_STOPPED : GW_CHANNEL_DISABLED;
     snapshot->process_kind = GW_CHANNEL_PROCESS_NONE;
     snapshot->process_pid = -1;
+    snapshot->worker_metrics.pid = (pid_t)-1;
     snapshot->last_exit_code = -1;
     set_event(snapshot, "initialized");
 }

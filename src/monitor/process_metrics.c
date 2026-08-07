@@ -236,3 +236,55 @@ int gw_process_metrics_read(pid_t pid, gw_process_metrics *metrics)
     *metrics = candidate;
     return 0;
 }
+
+void gw_process_metrics_tracker_init(gw_process_metrics_tracker *tracker)
+{
+    if (tracker == NULL) {
+        return;
+    }
+    memset(tracker, 0, sizeof(*tracker));
+    tracker->pid = (pid_t)-1;
+}
+
+void gw_process_metrics_tracker_update(gw_process_metrics_tracker *tracker,
+                                       pid_t pid,
+                                       const gw_process_metrics *metrics,
+                                       int64_t sample_time_ns,
+                                       long clock_ticks_per_second,
+                                       gw_process_metrics_snapshot *snapshot)
+{
+    bool same_baseline;
+
+    if (tracker == NULL || snapshot == NULL) {
+        return;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->pid = pid;
+    if (pid <= 0 || metrics == NULL || sample_time_ns <= 0 ||
+        clock_ticks_per_second <= 0) {
+        gw_process_metrics_tracker_init(tracker);
+        return;
+    }
+
+    snapshot->available = true;
+    snapshot->rss_kib = metrics->rss_kib;
+    snapshot->fd_count = metrics->fd_count;
+    same_baseline = tracker->baseline_valid && tracker->pid == pid &&
+                    sample_time_ns > tracker->previous_time_ns &&
+                    metrics->cpu_ticks >= tracker->previous_cpu_ticks;
+    if (same_baseline) {
+        uint64_t delta_ticks = metrics->cpu_ticks - tracker->previous_cpu_ticks;
+        int64_t delta_time_ns = sample_time_ns - tracker->previous_time_ns;
+
+        snapshot->cpu_percent =
+            (double)delta_ticks * 100.0 * 1000000000.0 /
+            ((double)clock_ticks_per_second * (double)delta_time_ns);
+        snapshot->cpu_available = true;
+    }
+
+    tracker->pid = pid;
+    tracker->baseline_valid = true;
+    tracker->previous_cpu_ticks = metrics->cpu_ticks;
+    tracker->previous_time_ns = sample_time_ns;
+}

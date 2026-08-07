@@ -2,7 +2,9 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/channel_manager.h"
+#include "gateway/process_metrics.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -10,6 +12,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 typedef struct gw_channel_entry gw_channel_entry;
 
@@ -25,6 +29,9 @@ struct gw_channel_entry {
     gw_supervisor_options options;
     gw_config run_config;
     gw_channel_snapshot snapshot;
+    gw_process_metrics_tracker metrics_tracker;
+    gw_process_metrics_snapshot worker_metrics;
+    uint64_t metrics_generation;
 };
 
 struct gw_channel_manager {
@@ -34,10 +41,20 @@ struct gw_channel_manager {
     pthread_rwlock_t snapshot_lock;
     atomic_int stop_signal;
     atomic_size_t active_threads;
+    atomic_bool metrics_stop_requested;
+    pthread_t metrics_thread;
+    bool metrics_thread_started;
     gw_channel_entry entries[GW_MAX_CHANNELS];
     bool started;
     int result;
 };
+
+typedef struct {
+    bool occupied;
+    uint64_t generation;
+    gw_channel_process_kind process_kind;
+    pid_t process_pid;
+} gw_metrics_target;
 
 static void set_error(gw_error *error, gw_status code, const char *format, ...)
 {
@@ -99,6 +116,106 @@ static void manager_observe(const gw_channel_snapshot *snapshot, void *context)
     if (manager->caller_options.observer != NULL) {
         manager->caller_options.observer(
             &published, manager->caller_options.observer_context);
+    }
+}
+
+static int64_t monotonic_time_ns(void)
+{
+    struct timespec now;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return -1;
+    }
+    return (int64_t)now.tv_sec * INT64_C(1000000000) + (int64_t)now.tv_nsec;
+}
+
+static void wait_for_next_metrics_sample(gw_channel_manager *manager)
+{
+    const struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000L};
+    unsigned int slice;
+
+    for (slice = 0U; slice < 10U; ++slice) {
+        struct timespec remaining = delay;
+
+        while (!atomic_load(&manager->metrics_stop_requested) &&
+               nanosleep(&remaining, &remaining) != 0 && errno == EINTR) {
+        }
+        if (atomic_load(&manager->metrics_stop_requested)) {
+            return;
+        }
+    }
+}
+
+static void *sample_process_metrics(void *context)
+{
+    gw_channel_manager *manager = context;
+    long clock_ticks_per_second = sysconf(_SC_CLK_TCK);
+
+    while (!atomic_load(&manager->metrics_stop_requested)) {
+        gw_metrics_target targets[GW_MAX_CHANNELS];
+        size_t index;
+
+        pthread_rwlock_rdlock(&manager->snapshot_lock);
+        for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
+            targets[index].occupied = manager->entries[index].occupied;
+            targets[index].generation = manager->entries[index].generation;
+            targets[index].process_kind =
+                manager->entries[index].snapshot.process_kind;
+            targets[index].process_pid =
+                manager->entries[index].snapshot.process_pid;
+        }
+        pthread_rwlock_unlock(&manager->snapshot_lock);
+
+        for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
+            gw_channel_entry *entry = &manager->entries[index];
+            gw_process_metrics raw_metrics;
+            const gw_process_metrics *raw = NULL;
+            gw_process_metrics_snapshot sampled;
+            pid_t pid = (pid_t)-1;
+            int64_t sample_time_ns = monotonic_time_ns();
+
+            if (entry->metrics_generation != targets[index].generation) {
+                gw_process_metrics_tracker_init(&entry->metrics_tracker);
+                entry->metrics_generation = targets[index].generation;
+            }
+            if (targets[index].occupied &&
+                targets[index].process_kind == GW_CHANNEL_PROCESS_WORKER &&
+                targets[index].process_pid > 0) {
+                pid = targets[index].process_pid;
+                if (gw_process_metrics_read(pid, &raw_metrics) == 0) {
+                    raw = &raw_metrics;
+                }
+            }
+            gw_process_metrics_tracker_update(
+                &entry->metrics_tracker, pid, raw, sample_time_ns,
+                clock_ticks_per_second, &sampled);
+
+            pthread_rwlock_wrlock(&manager->snapshot_lock);
+            if (entry->occupied == targets[index].occupied &&
+                entry->generation == targets[index].generation &&
+                entry->snapshot.process_kind == targets[index].process_kind &&
+                entry->snapshot.process_pid == targets[index].process_pid) {
+                entry->worker_metrics = sampled;
+            } else {
+                memset(&entry->worker_metrics, 0,
+                       sizeof(entry->worker_metrics));
+                entry->worker_metrics.pid = (pid_t)-1;
+            }
+            pthread_rwlock_unlock(&manager->snapshot_lock);
+        }
+        wait_for_next_metrics_sample(manager);
+    }
+    return NULL;
+}
+
+static void attach_worker_metrics(const gw_channel_entry *entry,
+                                  gw_channel_snapshot *snapshot)
+{
+    memset(&snapshot->worker_metrics, 0, sizeof(snapshot->worker_metrics));
+    snapshot->worker_metrics.pid = snapshot->process_pid;
+    if (snapshot->process_kind == GW_CHANNEL_PROCESS_WORKER &&
+        entry->worker_metrics.pid == snapshot->process_pid) {
+        snapshot->worker_metrics = entry->worker_metrics;
     }
 }
 
@@ -213,6 +330,8 @@ static void configure_entry(gw_channel_entry *entry,
     ++entry->generation;
     gw_channel_snapshot_init(&entry->snapshot, channel);
     entry->snapshot.configuration_generation = entry->generation;
+    memset(&entry->worker_metrics, 0, sizeof(entry->worker_metrics));
+    entry->worker_metrics.pid = (pid_t)-1;
     entry->occupied = true;
 }
 
@@ -288,6 +407,7 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
     manager->caller_options = *options;
     atomic_init(&manager->stop_signal, 0);
     atomic_init(&manager->active_threads, 0U);
+    atomic_init(&manager->metrics_stop_requested, false);
     result = pthread_rwlock_init(&manager->snapshot_lock, NULL);
     if (result != 0) {
         free(manager);
@@ -307,6 +427,9 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
         manager->entries[index].manager = manager;
         atomic_init(&manager->entries[index].stop_signal, 0);
         atomic_init(&manager->entries[index].thread_running, false);
+        gw_process_metrics_tracker_init(
+            &manager->entries[index].metrics_tracker);
+        manager->entries[index].worker_metrics.pid = (pid_t)-1;
     }
     for (index = 0U; index < config->channel_count; ++index) {
         gw_channel_entry *entry;
@@ -338,6 +461,7 @@ gw_status gw_channel_manager_start(gw_channel_manager *manager, gw_error *error)
         return GW_ERR_VALIDATION;
     }
     manager->started = true;
+    atomic_store(&manager->metrics_stop_requested, false);
     for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
         if (!manager->entries[index].occupied) {
             continue;
@@ -351,6 +475,23 @@ gw_status gw_channel_manager_start(gw_channel_manager *manager, gw_error *error)
             pthread_mutex_unlock(&manager->lifecycle_lock);
             return status;
         }
+    }
+    {
+        int result = pthread_create(&manager->metrics_thread, NULL,
+                                    sample_process_metrics, manager);
+
+        if (result != 0) {
+            gw_channel_manager_request_stop(manager, SIGTERM);
+            for (index = 0U; index < GW_MAX_CHANNELS; ++index) {
+                stop_entry(&manager->entries[index]);
+            }
+            manager->started = false;
+            pthread_mutex_unlock(&manager->lifecycle_lock);
+            set_error(error, GW_ERR_IO, "cannot start metrics sampler: %s",
+                      strerror(result));
+            return GW_ERR_IO;
+        }
+        manager->metrics_thread_started = true;
     }
     pthread_mutex_unlock(&manager->lifecycle_lock);
     clear_error(error);
@@ -464,6 +605,7 @@ gw_status gw_channel_manager_get_snapshot(gw_channel_manager *manager,
         if (manager->entries[index].occupied &&
             strcmp(manager->entries[index].snapshot.channel_id, channel_id) == 0) {
             *snapshot = manager->entries[index].snapshot;
+            attach_worker_metrics(&manager->entries[index], snapshot);
             pthread_rwlock_unlock(&manager->snapshot_lock);
             clear_error(error);
             return GW_OK;
@@ -499,7 +641,9 @@ gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
                       "snapshot array capacity is too small");
             return GW_ERR_OVERFLOW;
         }
-        snapshots[copied++] = manager->entries[index].snapshot;
+        snapshots[copied] = manager->entries[index].snapshot;
+        attach_worker_metrics(&manager->entries[index], &snapshots[copied]);
+        ++copied;
     }
     pthread_rwlock_unlock(&manager->snapshot_lock);
     *count = copied;
@@ -646,6 +790,7 @@ void gw_channel_manager_request_stop(gw_channel_manager *manager,
     if (manager != NULL) {
         atomic_store(&manager->stop_signal,
                      signal_number != 0 ? signal_number : SIGTERM);
+        atomic_store(&manager->metrics_stop_requested, true);
     }
 }
 
@@ -674,6 +819,11 @@ int gw_channel_manager_wait(gw_channel_manager *manager)
         if (entry->occupied && entry->result != 0) {
             manager->result = 1;
         }
+    }
+    atomic_store(&manager->metrics_stop_requested, true);
+    if (manager->metrics_thread_started) {
+        pthread_join(manager->metrics_thread, NULL);
+        manager->metrics_thread_started = false;
     }
     pthread_mutex_unlock(&manager->lifecycle_lock);
     return manager->result;

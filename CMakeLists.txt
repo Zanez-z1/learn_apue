@@ -16,6 +16,7 @@ add_library(gateway_core
     src/api/http_server.c
     src/channel/channel_manager.c
     src/channel/channel_snapshot.c
+    src/monitor/process_metrics.c
     src/channel/channel_state.c
     src/channel/supervisor.c
     src/config/config.c

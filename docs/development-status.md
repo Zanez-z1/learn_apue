@@ -626,6 +626,19 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
   enabled/inactive，无 gatewayd/FFmpeg/MediaMTX/zombie。最终 SSH ControlMaster 随后
   失效，因此没有为了纯文档变更要求再次输入密码，也没有伪造重复板卡回归。
 
+### 实时 OSD 增量 1：后台 FFmpeg 进程指标快照
+
+- `process_metrics` 新增有状态 CPU 采样器，以相邻单调时钟采样和 `/proc/<pid>/stat`
+  累计 tick 计算 CPU 百分比；首次采样、PID 更换、tick 回退或进程消失时明确取消 CPU
+  基线，不沿用旧进程数据。
+- 通道管理器新增独立的一秒周期采样线程。`/proc` 读取在 HTTP 请求路径之外完成，只有最终
+  小型快照在读写锁内发布；停止通道、工作进程 PID 变化或配置代次变化时，读取方立即得到
+  unavailable，而不是过期 RSS/CPU。
+- 确定性单元测试覆盖首次无基线、正常增量、PID 更换、进程消失和 tick 回退；管理器集成
+  测试覆盖真实子进程 RSS/CPU、停止后 unavailable、新 PID 重建基线和四线程并发读取。
+- 2026-08-07 开发机相关常规测试 2/2、对应 TSan 2/2 PASS；完整 CTest 和
+  ASan/UBSan 在 OSD 页面增量完成后统一执行。本增量尚未进行 RK3588 验收。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -646,6 +659,7 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的有限退避及自动恢复。
 - systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
 - 可安装的 C17 进程指标采样工具及原始/汇总 CSV 输出。
+- gatewayd 后台采样每路 FFmpeg CPU/RSS 并发布并发安全快照；尚未接入诊断页面。
 
 当前限制：
 

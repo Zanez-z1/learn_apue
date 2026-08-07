@@ -166,6 +166,80 @@ static int wait_for_state(gw_channel_manager *manager, const char *channel_id,
     return 0;
 }
 
+static int wait_for_process_metrics(gw_channel_manager *manager,
+                                    const char *channel_id,
+                                    gw_channel_snapshot *snapshot)
+{
+    const struct timespec pause_time = {.tv_sec = 0, .tv_nsec = 20000000L};
+    gw_error error = {0};
+    int attempt;
+
+    for (attempt = 0; attempt < 150; ++attempt) {
+        if (gw_channel_manager_get_snapshot(manager, channel_id, snapshot,
+                                            &error) == GW_OK &&
+            snapshot->worker_metrics.available &&
+            snapshot->worker_metrics.cpu_available &&
+            snapshot->worker_metrics.pid == snapshot->process_pid) {
+            return 1;
+        }
+        nanosleep(&pause_time, NULL);
+    }
+    return 0;
+}
+
+typedef struct {
+    gw_channel_manager *manager;
+    const char *channel_id;
+    int failed;
+} snapshot_reader;
+
+static void *read_snapshots(void *context)
+{
+    snapshot_reader *reader = context;
+    gw_error error = {0};
+    int iteration;
+
+    for (iteration = 0; iteration < 1000; ++iteration) {
+        gw_channel_snapshot snapshot;
+
+        if (gw_channel_manager_get_snapshot(reader->manager, reader->channel_id,
+                                            &snapshot, &error) != GW_OK) {
+            reader->failed = 1;
+            break;
+        }
+        if (snapshot.worker_metrics.available &&
+            (snapshot.process_kind != GW_CHANNEL_PROCESS_WORKER ||
+             snapshot.worker_metrics.pid != snapshot.process_pid)) {
+            reader->failed = 1;
+            break;
+        }
+    }
+    return NULL;
+}
+
+static void check_concurrent_snapshot_reads(gw_channel_manager *manager)
+{
+    snapshot_reader readers[4];
+    pthread_t threads[4];
+    int created[4];
+    size_t index;
+
+    for (index = 0U; index < 4U; ++index) {
+        readers[index].manager = manager;
+        readers[index].channel_id = index % 2U == 0U ? "cam01" : "cam02";
+        readers[index].failed = 0;
+        created[index] = pthread_create(&threads[index], NULL, read_snapshots,
+                                        &readers[index]);
+        CHECK(created[index] == 0);
+    }
+    for (index = 0U; index < 4U; ++index) {
+        if (created[index] == 0) {
+            pthread_join(threads[index], NULL);
+            CHECK(readers[index].failed == 0);
+        }
+    }
+}
+
 typedef struct {
     gw_channel_manager *manager;
     const char *channel_id;
@@ -195,6 +269,7 @@ static void test_channel_controls(const char *fixture)
     pthread_t second_thread;
     int first_created;
     int second_created;
+    pid_t original_pid;
 
     make_config(&config, false);
     snprintf(config.channels[0].input.url, sizeof(config.channels[0].input.url),
@@ -210,15 +285,24 @@ static void test_channel_controls(const char *fixture)
     CHECK(gw_channel_manager_start(manager, &error) == GW_OK);
     CHECK(wait_for_state(manager, "cam01", GW_CHANNEL_RUNNING, 1U, &snapshot));
     CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 1U, &snapshot));
+    CHECK(wait_for_process_metrics(manager, "cam02", &snapshot));
+    CHECK(snapshot.worker_metrics.rss_kib > 0L);
+    original_pid = snapshot.process_pid;
+    check_concurrent_snapshot_reads(manager);
 
     CHECK(gw_channel_manager_stop_channel(manager, "missing", &error) ==
           GW_ERR_NOT_FOUND);
     CHECK(gw_channel_manager_stop_channel(manager, "cam02", &error) == GW_OK);
     CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_STOPPED, 1U, &snapshot));
+    CHECK(!snapshot.worker_metrics.available);
+    CHECK(!snapshot.worker_metrics.cpu_available);
     CHECK(gw_channel_manager_stop_channel(manager, "cam02", &error) ==
           GW_ERR_CONFLICT);
     CHECK(gw_channel_manager_start_channel(manager, "cam02", &error) == GW_OK);
     CHECK(wait_for_state(manager, "cam02", GW_CHANNEL_RUNNING, 1U, &snapshot));
+    CHECK(snapshot.process_pid != original_pid);
+    CHECK(!snapshot.worker_metrics.cpu_available);
+    CHECK(wait_for_process_metrics(manager, "cam02", &snapshot));
     CHECK(gw_channel_manager_start_channel(manager, "cam02", &error) ==
           GW_ERR_CONFLICT);
     CHECK(gw_channel_manager_restart_channel(manager, "cam02", &error) == GW_OK);

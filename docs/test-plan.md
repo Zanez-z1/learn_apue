@@ -1743,6 +1743,41 @@ GCC -fanalyzer：全量构建完成；剩余 6 条跨函数告警人工复核
 结果：PASS（原定软件功能与短时实板验证范围）
 ```
 
+### 8.9 实时 OSD：后台进程指标采样
+
+这一增量只验证 gatewayd 的后台采样与快照一致性，不把命令行 `gateway-metrics` 的结果
+冒充页面指标，也不在 HTTP 请求处理线程读取 `/proc`。
+
+执行：
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure \
+  -R 'gateway_(process_metrics|channel_manager)_tests'
+```
+
+通过标准：
+
+- 首次样本提供 RSS，但 CPU 因没有相邻基线而不可用。
+- 同一 PID 的正常 tick/时间增量得到预期 CPU 百分比。
+- PID 更换、进程消失和 tick 回退会清除旧 CPU 基线。
+- 停止通道后快照立即报告进程指标 unavailable；再次启动的新 PID 重新建立基线。
+- 多个读取线程不能观察到指标 PID 与当前工作进程 PID 不一致；TSan 最终门禁复核无竞态。
+
+实际记录：
+
+```text
+日期：2026-08-07
+环境：开发机 Debug 构建
+确定性 process_metrics 单元测试：PASS
+通道管理器进程指标与四线程快照测试：PASS
+相关常规 CTest：2/2 PASS
+ASan/UBSan：PENDING（OSD 功能完成后统一执行）
+TSan：相关 2/2 PASS
+RK3588：PENDING
+结果：PASS（仅本增量常规测试）
+```
+
 ## 9. 阶段验收记录模板
 
 完成新阶段时复制以下模板：

@@ -150,7 +150,10 @@ FPS、帧数、丢帧、重启计数和 FFmpeg CPU/RSS 由 gatewayd 提供并每
 当前 HTTP 服务没有身份认证，默认回环监听是安全边界，不应直接暴露到不受信任的网络。
 监听地址、端口和启用状态的修改需要重启 `gatewayd`，不会通过 SIGHUP 生效。
 `gatewayd` 默认保持常驻，即使所有通道均已停止也可通过接口重新启动；仅批处理场景可
-使用 `--exit-when-idle` 让程序在全部通道结束后退出。
+使用 `--exit-when-idle` 让程序在全部通道结束后退出。启用通道超过 `max_retries` 后会显示
+`FAILED`，但默认守护模式不会放弃该通道：它按 `max_backoff_sec` 低频探测，输入恢复后自动
+经过 `PROBING`、`STARTING` 回到 `RUNNING`。只有一次性 `--exit-when-idle` 模式会在重试
+耗尽后结束。
 
 从 PC 摄像头推流、板卡编译和前台运行，到 RTSP/WebRTC 播放、HTTP 控制、录像和故障
 恢复的完整流程见 [从零跑通与演示完整视频链路](docs/demo.md)。

@@ -286,6 +286,9 @@ STOPPED ---- start ----> PROBING ---- success ----> STARTING
                               | retries exhausted
                               v
                             FAILED
+                              |
+                              | max_backoff_sec elapsed
+                              +---------------------> PROBING
 ```
 
 状态含义：
@@ -296,9 +299,13 @@ STOPPED ---- start ----> PROBING ---- success ----> STARTING
 - `STARTING`：工作进程已创建，等待有效进度。
 - `RUNNING`：持续收到视频处理进度。
 - `BACKOFF`：发生可恢复错误，等待下一次重试。
-- `FAILED`：连续失败达到上限，需要人工处理或配置变更。
+- `FAILED`：连续失败达到上限，按低频周期等待下一次自动探测；它是可恢复状态，不是监督
+  线程终态。
 
-默认退避时间建议为 1、2、4、8、16、30 秒，后续重试保持 30 秒上限。稳定运行超过指定时间后，将连续失败计数清零。
+默认退避时间建议为 1、2、4、8、16、30 秒。进入 `FAILED` 后继续以
+`max_backoff_sec`（默认 30 秒）探测，避免忙循环；输入恢复后执行
+`FAILED -> PROBING -> STARTING -> RUNNING`。稳定运行超过指定时间后清零连续失败计数，
+但保留累计重启数。显式 `--exit-when-idle` 是例外，它为一次性执行保留耗尽后退出语义。
 
 ## 8. 线程与事件模型
 

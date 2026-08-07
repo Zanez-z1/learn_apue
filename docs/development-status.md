@@ -684,6 +684,20 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
   指标 API 将 PID、输入、progress、CPU 和 RSS 全部报告 unavailable，证明离线时不保留
   过期值；不能据此宣称真实画面、RUNNING 指标、浏览器同屏或恢复验收通过。
 
+### 当前增量：FAILED 无人值守恢复修复
+
+- 旧实现超过 `max_retries` 后从 supervisor 返回，启用通道永久停在 `FAILED`；此前短暂
+  断流恢复记录不能证明长期无人值守恢复。
+- 默认守护模式现在将 `FAILED` 定义为可恢复状态：前 `max_retries` 次保持指数退避，耗尽后
+  按 `max_backoff_sec` 低频等待并重新进入 `PROBING`。等待可被 stop、disable、reload 和
+  进程退出及时打断；`--exit-when-idle` 单次执行模式仍允许耗尽后结束。
+- 每次失败等待前清除 PID、输入探测、progress 和 CPU/RSS，恢复后的新 PID 重新建立指标
+  基线；稳定运行达到 `stable_run_sec` 后只清零连续失败数，累计重启数保留。
+- 诊断页检测到非 RUNNING 状态重新进入 `RUNNING` 时会重载一次 MediaMTX iframe，支持页面
+  先打开、输入后恢复时自动出现画面。
+- 开发机完成编译和关键既有回归 5/5 PASS。按用户要求不继续扩写模拟测试，最终结论以
+  RK3588 先启动、PC 长期不推流、超过上限后再推流的人工真实验收为准；当前为 `PENDING`。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -692,7 +706,7 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 每次工作进程启动前执行 ffprobe，校验首个视频流的编码和尺寸。
 - 可通过同步观察回调取得单通道生命周期快照。
 - 结构化进度、最终指标和受控 stderr 日志。
-- 信号停止、超时清理、自动重试和失败终态。
+- 信号停止、超时清理、自动重试和可低频恢复的 `FAILED` 状态。
 - SIGHUP 候选配置校验与按通道差异化重载。
 - 开发机夹具模拟输入或发布端中断后，故障通道可独立退避并恢复运行。
 - 本地 HTTP 健康检查、通道状态查询，以及并发安全的启动、停止和重启控制。
@@ -701,7 +715,7 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 开发机假工作进程端到端验证。
 - RK3588 上的真实 PC 摄像头 RTSP、MPP/RGA 转码、RTSP/WebRTC 播放与 HTTP 控制。
 - MediaMTX 真实录像、回放、自动删除、低空间状态和停止后重新发布恢复。
-- 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的有限退避及自动恢复。
+- 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的退避及自动恢复。
 - systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
 - 可安装的 C17 进程指标采样工具及原始/汇总 CSV 输出。
 - gatewayd 后台采样每路 FFmpeg CPU/RSS，并通过轻量浏览器诊断页显示 WebRTC 画面和

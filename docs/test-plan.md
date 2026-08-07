@@ -482,13 +482,14 @@ gateway_probe_retry_exhaustion_test
 - ffprobe 非零退出时记录 `probe_failure`，且其 stderr 源 URL 密码被隐藏。
 - ffprobe 超过 `probe_timeout_sec` 时被终止并记录 `probe_timeout`。
 - 探测编码与配置解码器不匹配时记录 `probe_mismatch`，不启动 FFmpeg。
-- 探测连续失败时同样进入 `BACKOFF`，重试耗尽后进入 `FAILED`。
+- 探测连续失败时同样进入 `BACKOFF`，重试耗尽后进入可自动恢复的 `FAILED`。
 - 未在 `startup_timeout_sec` 内收到 progress 时终止工作进程并记录
   `startup_timeout`。
 - 已进入 `RUNNING` 后 progress 超过 `progress_timeout_sec` 未更新时记录
   `progress_timeout`。
 - 工作进程连续失败时进入 `BACKOFF` 并自动重启。
-- 超过 `max_retries` 后进入 `FAILED`，不再快速重启。
+- 超过 `max_retries` 后进入 `FAILED`，默认守护模式以 `max_backoff_sec` 低频探测而不是退出；
+  `--exit-when-idle` 仍在耗尽后结束。
 - 所有失败路径都继续检查日志中不得出现明文密码。
 
 预期：全部测试通过，CTest 输出中不得出现 `fixture-password`。
@@ -639,7 +640,8 @@ ctest --test-dir build-tsan --output-on-failure \
 - 已通过本文档 Phase 0 环境检查和 Phase 1 单路 5 分钟以上媒体链路验收。
 - MediaMTX 作为独立服务运行，并确认实际 service 名称；以下示例使用 `mediamtx`。
 - 准备两个真实 RTSP 输入和两个不同输出路径 `cam01`、`cam02`。
-- 测试配置的 `max_retries` 和 `max_backoff_sec` 应允许在重试耗尽前人工恢复故障。
+- 保留生产配置的 `max_retries` 和 `max_backoff_sec`；验收必须故意等待超过重试上限，再恢复
+  输入，以证明 `FAILED` 能无人值守恢复。
 - 配置文件放在 Git 仓库外，真实用户名和密码不得写入测试记录。
 
 构建并保存环境基线：
@@ -671,8 +673,9 @@ GATEWAY_PID=$!
 1. 保持 `cam01` 播放，停止 `cam02` 的上游 RTSP 源。
 2. 确认 `cam02` 进入 `BACKOFF`，退避值没有超过配置上限。
 3. 故障期间确认 `cam01` 持续播放，日志中没有新的 `cam01 restart_count`。
-4. 在重试耗尽前恢复 `cam02` 上游源。
-5. 确认 `cam02` 重新经历 `PROBING`、`STARTING`、`RUNNING`，输出重新可播放。
+4. 等待超过重试上限，确认 `cam02` 显示 `FAILED` 且仍按上限退避低频探测。
+5. 恢复 `cam02` 上游源，不调用控制接口、不重启 gatewayd。
+6. 确认 `cam02` 重新经历 `PROBING`、`STARTING`、`RUNNING`，输出重新可播放。
 
 通过标准：`cam02` 自动恢复，`cam01` 不重启且播放不中断。
 
@@ -1877,6 +1880,7 @@ http://127.0.0.1:9080/view/cam02
 页面静态验收：HTTP 200、Content-Type/CSP/no-store/nosniff/no-referrer PASS
 页面资源：板卡与开发机 SHA-256 一致
 30 分钟及更长稳定性：不在本轮执行
+长期离线超过 max_retries 后无人值守恢复：PENDING（必须由用户真实推流验收）
 ```
 
 ## 9. 阶段验收记录模板

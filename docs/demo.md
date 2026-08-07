@@ -161,7 +161,8 @@ export CAM01_RTSP_URL='rtsp://192.168.1.16:8554/source'
 3. 不带检查选项才真正启动通道、探测 RTSP 并创建 FFmpeg 工作进程。
 
 最后一个命令会一直占用终端。预期 `cam01` 依次经历 `PROBING`、`STARTING`、
-`RUNNING`，随后帧数持续增长。如果 PC 测试源还没启动，通道会进入 `BACKOFF` 并重试。
+`RUNNING`，随后帧数持续增长。如果 PC 测试源还没启动，通道先进入 `BACKOFF`；超过快速
+重试上限后显示 `FAILED`，并按 `max_backoff_sec` 继续低频探测，不需要重启服务。
 
 ## 6. 看实时画面和查询状态
 
@@ -267,12 +268,15 @@ sudo find /var/lib/rk-media-gateway/recordings/cam01 \
 
 ### 7.3 RTSP 断流自动恢复
 
-1. 在 PC-2 对推流 FFmpeg 按 `Ctrl+C`。
-2. 观察 Board-1：工作进程退出，通道进入 `BACKOFF`。
-3. 再次执行第 3.3 节的 PC 推流命令。
-4. 观察板卡重新探测并创建新的 FFmpeg，通道回到 `RUNNING`。
-5. 诊断页应先显示 `BACKOFF` 和实时字段 `unavailable`，恢复后显示新 FFmpeg PID、更新的
-   CPU/RSS 和重新出现的画面。
+首要验收必须覆盖“启动时源长期离线”，不能只测短暂断流：
+
+1. 先启动板端 gatewayd，并提前打开诊断页面；此时 PC 不推流。
+2. 等待通道超过 `max_retries`，确认它显示 `FAILED`，实时字段为 `unavailable`，gatewayd
+   服务没有重启。
+3. 继续等待至少一个 `max_backoff_sec` 周期，确认探测频率受限而监督线程仍在工作。
+4. 再启动第 3.3 节的 PC 推流命令，全程不调用 start/restart 接口、不执行 systemctl restart。
+5. 观察通道自行执行 `FAILED -> PROBING -> STARTING -> RUNNING`，出现新 FFmpeg PID、更新的
+   CPU/RSS；诊断页在进入 `RUNNING` 时自动重新加载播放器并出现画面，无需手动刷新。
 
 网关重启的是板卡上的 FFmpeg 工作进程，不是远程摄像头。摄像头完全死机时仍需要摄像头
 自身看门狗、ONVIF/厂商重启接口或可管理 PoE 供电设备。

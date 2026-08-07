@@ -145,11 +145,16 @@ PROBING -> STARTING -> RUNNING
    ^                       |
    |                       | 退出、启动超时或 progress 超时
    +------ BACKOFF <-------+
+   ^
+   | max_backoff_sec
+ FAILED
 ```
 
 `supervisor` 每 250ms 左右轮询管道和进程状态；失败后清理旧工作进程，按有上限的退避时间
 等待，再重新从 ffprobe 开始。连续稳定运行达到 `stable_run_sec` 后，连续失败计数会清零。
-超过 `max_retries` 才进入 `FAILED`。
+超过 `max_retries` 后进入 `FAILED`，但默认 supervisor 线程仍存活，并按
+`max_backoff_sec` 低频执行 `FAILED -> PROBING`。stop、disable、配置 reload 和进程退出会
+通过短周期 stop check 打断这段等待。`--exit-when-idle` 才把重试耗尽视为一次性运行结束。
 
 读完应能准确说明：网关恢复的是本机 FFmpeg/RTSP 会话，不会让远程摄像头断电重启。
 

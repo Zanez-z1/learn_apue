@@ -244,7 +244,7 @@ start_publisher() {
 }
 
 print_controls() {
-    printf '[READY] Enter s to stop only FFmpeg, r to publish again, or q to stop both.\n'
+    printf '[READY] Type s, r, or q, then press Enter: s stops only FFmpeg, r publishes again, q stops both.\n'
 }
 
 start_publisher

@@ -60,7 +60,8 @@ http://127.0.0.1:9080/view/cam01?media_host=192.168.1.45
 预期同一页面显示 WebRTC 实时画面，以及 state、FFmpeg PID、输入编码/分辨率、FPS、码率、
 帧数/丢帧、失败/重启计数和 CPU/RSS。结束时分别在摄像头源终端和 SSH 隧道终端按
 `Ctrl+C`；源脚本只清理本轮启动的两个明确 PID。需要演示重复断流时，在源脚本终端输入
-`s` 只停止 FFmpeg，观察离线后输入 `r` 恢复发布；PC MediaMTX 在两步之间保持运行。
+`s` 并按回车只停止 FFmpeg，观察离线后输入 `r` 并按回车恢复发布；PC MediaMTX 在两步
+之间保持运行。
 
 网络上，SSH 隧道只承载 gatewayd 页面和 JSON（9080）。iframe 从浏览器直接访问板卡
 MediaMTX `BOARD_IP:8889` 完成 WebRTC HTTP 信令，媒体数据直接走板卡 `8189/UDP` ICE；

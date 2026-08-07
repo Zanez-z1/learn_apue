@@ -1881,6 +1881,8 @@ http://127.0.0.1:9080/view/cam02
 页面资源：板卡与开发机 SHA-256 一致
 30 分钟及更长稳定性：不在本轮执行
 长期离线超过 max_retries 后无人值守恢复：PENDING（必须由用户真实推流验收）
+恢复修复部署：PASS（2026-08-07 13:20:30 CST，gatewayd PID 580812，服务 active）
+部署一致性：PASS（已安装 gatewayd/diagnostic.html 与板端 staging SHA-256 一致）
 ```
 
 ## 9. 阶段验收记录模板

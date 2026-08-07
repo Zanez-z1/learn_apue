@@ -697,6 +697,13 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
   先打开、输入后恢复时自动出现画面。
 - 开发机完成编译和关键既有回归 5/5 PASS。按用户要求不继续扩写模拟测试，最终结论以
   RK3588 先启动、PC 长期不推流、超过上限后再推流的人工真实验收为准；当前为 `PENDING`。
+- 提交 `c1a7832` 已在独立板端 staging
+  `/home/cat/rk3588-media-gateway-recovery-20260807` 用 aarch64 GCC 10.2.1 Release 构建并
+  安装。部署二进制和页面分别与 staging 产物 SHA-256 一致；旧文件保存在 staging 的
+  `gatewayd.pre-recovery` 和 `diagnostic.pre-recovery.html`。
+- `rk-media-gateway.service` 于 2026-08-07 13:20:30 CST 以 PID 580812 启动并保持 active；
+  PC 未推流时 cam01 已重新进入退避，当前字段为 unavailable。真实 `FAILED` 后恢复画面仍
+  等待用户启动 PC 推流，不能据此标为 PASS。
 
 ## 5. 当前能力边界
 

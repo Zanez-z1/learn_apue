@@ -1,6 +1,7 @@
 /* Pure channel state transitions and bounded exponential retry scheduling. */
 #include "gateway/channel_state.h"
 
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -70,10 +71,12 @@ static gw_status handle_failure(gw_channel_runtime *runtime,
         return reject_transition(runtime, GW_CHANNEL_EVENT_FAILURE, error);
     }
 
-    ++runtime->consecutive_failures;
+    if (runtime->consecutive_failures < UINT_MAX) {
+        ++runtime->consecutive_failures;
+    }
     if (runtime->consecutive_failures > (unsigned int)policy->max_retries) {
         runtime->state = GW_CHANNEL_FAILED;
-        runtime->backoff_sec = 0;
+        runtime->backoff_sec = policy->max_backoff_sec;
     } else {
         runtime->state = GW_CHANNEL_BACKOFF;
         runtime->backoff_sec = calculate_backoff(runtime->consecutive_failures,
@@ -135,7 +138,8 @@ gw_status gw_channel_transition(gw_channel_runtime *runtime,
     case GW_CHANNEL_EVENT_FAILURE:
         return handle_failure(runtime, policy, error);
     case GW_CHANNEL_EVENT_BACKOFF_ELAPSED:
-        if (runtime->state != GW_CHANNEL_BACKOFF) {
+        if (runtime->state != GW_CHANNEL_BACKOFF &&
+            runtime->state != GW_CHANNEL_FAILED) {
             return reject_transition(runtime, event, error);
         }
         runtime->state = GW_CHANNEL_PROBING;

@@ -73,6 +73,7 @@ static void test_default_options(void)
     CHECK(options.stop_check == NULL);
     CHECK(options.stop_context == NULL);
     CHECK(!options.stop_on_clean_exit);
+    CHECK(!options.exit_on_retry_exhaustion);
     CHECK(options.observer == NULL);
     CHECK(options.observer_context == NULL);
 }
@@ -165,6 +166,7 @@ static void test_unsolicited_zero_exit_retries(const char *fixture)
     options.observer_context = &capture;
     gw_config_init(&config);
     config.defaults.max_retries = 0;
+    options.exit_on_retry_exhaustion = true;
     make_channel(&channel);
     CHECK(gw_supervisor_run(&config, &channel, &options) == 1);
     CHECK(capture.last.state == GW_CHANNEL_FAILED);

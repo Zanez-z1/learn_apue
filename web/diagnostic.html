@@ -107,6 +107,10 @@
     const channel = pathParts.length === 2 && pathParts[0] === "view"
       ? decodeURIComponent(pathParts[1])
       : "";
+    const rawHost = location.hostname.replace(/^\[|\]$/g, "");
+    const mediaHost = rawHost.includes(":") ? `[${rawHost}]` : rawHost;
+    const videoUrl = `http://${mediaHost}:8889/${encodeURIComponent(channel)}`;
+    let previousState = null;
     const field = (id) => document.getElementById(id);
     const put = (id, value) => {
       field(id).textContent = value === null || value === undefined || value === ""
@@ -122,6 +126,10 @@
 
     function show(data) {
       clearLive();
+      if (data.state === "RUNNING" && previousState !== "RUNNING") {
+        field("video").src = videoUrl;
+      }
+      previousState = data.state;
       put("channel", data.id);
       put("state", data.state);
       put("pid", data.ffmpeg_pid);
@@ -154,15 +162,14 @@
         }
         show(await response.json());
       } catch (error) {
+        previousState = null;
         clearLive();
         put("state", null);
         put("failures", null);
       }
     }
 
-    const rawHost = location.hostname.replace(/^\[|\]$/g, "");
-    const mediaHost = rawHost.includes(":") ? `[${rawHost}]` : rawHost;
-    field("video").src = `http://${mediaHost}:8889/${encodeURIComponent(channel)}`;
+    field("video").src = videoUrl;
     put("channel", channel);
     refresh();
     setInterval(refresh, 1000);

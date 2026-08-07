@@ -67,6 +67,7 @@ static void test_two_channel_success(const char *fixture)
     options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     options.stop_on_clean_exit = true;
+    options.exit_on_retry_exhaustion = true;
     CHECK(gw_channel_manager_create(&manager, &config, &options, &error) == GW_OK);
     CHECK(gw_channel_manager_get_snapshot(manager, "cam01", &first, &error) ==
           GW_OK);
@@ -101,6 +102,7 @@ static void test_channel_failure_isolation(const char *fixture)
     options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     options.stop_on_clean_exit = true;
+    options.exit_on_retry_exhaustion = true;
     CHECK(gw_channel_manager_create(&manager, &config, &options, &error) == GW_OK);
     CHECK(gw_channel_manager_start(manager, &error) == GW_OK);
     CHECK(gw_channel_manager_wait(manager) == 1);

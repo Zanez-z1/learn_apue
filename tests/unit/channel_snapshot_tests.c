@@ -72,6 +72,15 @@ static void test_snapshot_updates(void)
     gw_channel_snapshot_set_progress(&snapshot, &progress, "progress");
     CHECK(snapshot.has_progress);
 
+    snapshot.worker_metrics.available = true;
+    snapshot.worker_metrics.cpu_available = true;
+    snapshot.worker_metrics.pid = 43;
+    gw_channel_snapshot_clear_live_data(&snapshot);
+    CHECK(!snapshot.has_probe);
+    CHECK(!snapshot.has_progress);
+    CHECK(!snapshot.worker_metrics.available);
+    CHECK(snapshot.worker_metrics.pid == -1);
+
     gw_channel_snapshot_clear_process(&snapshot, 143, "probe_timeout");
     CHECK(snapshot.process_kind == GW_CHANNEL_PROCESS_NONE);
     CHECK(snapshot.process_pid == -1);

@@ -53,6 +53,9 @@ void gw_channel_snapshot_set_process(gw_channel_snapshot *snapshot,
 void gw_channel_snapshot_clear_process(gw_channel_snapshot *snapshot,
                                        int exit_code, const char *event);
 
+/* Clear process-derived input/progress/resource data before a retry wait. */
+void gw_channel_snapshot_clear_live_data(gw_channel_snapshot *snapshot);
+
 void gw_channel_snapshot_set_probe(gw_channel_snapshot *snapshot,
                                    const gw_probe_info *probe);
 

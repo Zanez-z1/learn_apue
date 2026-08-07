@@ -76,7 +76,16 @@ static void test_backoff_and_exhaustion(void)
           GW_OK);
     CHECK(runtime.state == GW_CHANNEL_FAILED);
     CHECK(runtime.consecutive_failures == 4U);
-    CHECK(runtime.backoff_sec == 0);
+    CHECK(runtime.backoff_sec == 3);
+    CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_BACKOFF_ELAPSED,
+                                &policy, &error) == GW_OK);
+    CHECK(runtime.state == GW_CHANNEL_PROBING);
+    CHECK(runtime.total_restarts == 4U);
+    CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_FAILURE, &policy,
+                                &error) == GW_OK);
+    CHECK(runtime.state == GW_CHANNEL_FAILED);
+    CHECK(runtime.consecutive_failures == 5U);
+    CHECK(runtime.backoff_sec == 3);
 }
 
 static void test_zero_retries(void)
@@ -91,6 +100,7 @@ static void test_zero_retries(void)
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_FAILURE, &policy, &error) ==
           GW_OK);
     CHECK(runtime.state == GW_CHANNEL_FAILED);
+    CHECK(runtime.backoff_sec == 30);
     CHECK(runtime.total_restarts == 0U);
 }
 

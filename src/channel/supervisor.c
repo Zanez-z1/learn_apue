@@ -94,6 +94,7 @@ void gw_supervisor_options_init(gw_supervisor_options *options)
     options->stop_check = NULL;
     options->stop_context = NULL;
     options->stop_on_clean_exit = false;
+    options->exit_on_retry_exhaustion = false;
     options->observer = NULL;
     options->observer_context = NULL;
 }
@@ -858,16 +859,20 @@ int gw_supervisor_run(const gw_config *config,
                     error.message);
             return 1;
         }
+        gw_channel_snapshot_clear_live_data(&snapshot);
         gw_channel_snapshot_update_runtime(&snapshot, &runtime, failure_event);
         publish_snapshot(options, &snapshot);
         if (runtime.state == GW_CHANNEL_FAILED) {
             fprintf(stderr,
                     "channel=%s state=%s event=%s exit_code=%d failures=%u "
-                    "restart_count=%llu\n",
+                    "restart_count=%llu retry_in=%ds\n",
                     channel->id, gw_channel_state_string(runtime.state),
                     failure_event, failure_exit_code, runtime.consecutive_failures,
-                    (unsigned long long)runtime.total_restarts);
-            return 1;
+                    (unsigned long long)runtime.total_restarts,
+                    runtime.backoff_sec);
+            if (options->exit_on_retry_exhaustion) {
+                return 1;
+            }
         }
 
         fprintf(stderr,

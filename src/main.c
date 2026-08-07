@@ -279,6 +279,7 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[argument], "--exit-when-idle") == 0) {
             exit_when_idle = true;
             options.stop_on_clean_exit = true;
+            options.exit_on_retry_exhaustion = true;
         } else if (strcmp(argv[argument], "--ffprobe-binary") == 0 &&
                    argument + 1 < argc) {
             options.ffprobe_binary = argv[++argument];

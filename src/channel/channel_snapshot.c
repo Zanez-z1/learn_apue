@@ -73,6 +73,19 @@ void gw_channel_snapshot_clear_process(gw_channel_snapshot *snapshot,
     set_event(snapshot, event);
 }
 
+void gw_channel_snapshot_clear_live_data(gw_channel_snapshot *snapshot)
+{
+    if (snapshot == NULL) {
+        return;
+    }
+    snapshot->has_probe = false;
+    memset(&snapshot->probe, 0, sizeof(snapshot->probe));
+    snapshot->has_progress = false;
+    memset(&snapshot->progress, 0, sizeof(snapshot->progress));
+    memset(&snapshot->worker_metrics, 0, sizeof(snapshot->worker_metrics));
+    snapshot->worker_metrics.pid = (pid_t)-1;
+}
+
 void gw_channel_snapshot_set_probe(gw_channel_snapshot *snapshot,
                                    const gw_probe_info *probe)
 {

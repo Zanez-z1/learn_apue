@@ -24,6 +24,8 @@ typedef struct {
     void *stop_context;
     /* Test/one-shot mode: treat an unsolicited zero exit as terminal success. */
     bool stop_on_clean_exit;
+    /* One-shot mode: terminate after retry exhaustion instead of polling FAILED. */
+    bool exit_on_retry_exhaustion;
     gw_supervisor_observer observer;
     void *observer_context;
 } gw_supervisor_options;

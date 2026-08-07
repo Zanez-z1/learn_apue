@@ -36,7 +36,7 @@ typedef struct {
     unsigned int consecutive_failures;
     /* Automatic restarts performed after backoff elapsed. */
     uint64_t total_restarts;
-    /* Delay selected for the current BACKOFF state. */
+    /* Delay selected for the current BACKOFF or recoverable FAILED state. */
     int backoff_sec;
 } gw_channel_runtime;
 

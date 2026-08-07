@@ -48,6 +48,11 @@ void gw_channel_snapshot_set_process(gw_channel_snapshot *snapshot,
     if (snapshot == NULL) {
         return;
     }
+    if (kind == GW_CHANNEL_PROCESS_WORKER &&
+        (snapshot->process_kind != kind || snapshot->process_pid != pid)) {
+        memset(&snapshot->progress, 0, sizeof(snapshot->progress));
+        snapshot->has_progress = false;
+    }
     snapshot->process_kind = kind;
     snapshot->process_pid = pid;
     snapshot->has_exit_code = false;

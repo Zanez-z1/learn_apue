@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RK Media Gateway diagnostic view</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #05070a;
+      color: #e8f1f8;
+      font: 14px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    main {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #000;
+    }
+
+    .osd {
+      position: absolute;
+      z-index: 2;
+      top: 12px;
+      left: 12px;
+      min-width: 310px;
+      padding: 10px 12px;
+      border: 1px solid rgba(113, 211, 255, 0.45);
+      border-radius: 6px;
+      background: rgba(3, 10, 15, 0.68);
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+      pointer-events: none;
+      text-shadow: 0 1px 2px #000;
+      backdrop-filter: blur(2px);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 148px 1fr;
+      gap: 10px;
+    }
+
+    .key {
+      color: #8fc6dc;
+    }
+
+    .value {
+      color: #f5fbff;
+    }
+
+    .state {
+      color: #75e6a4;
+      font-weight: 700;
+    }
+
+    .hint {
+      position: absolute;
+      right: 12px;
+      bottom: 10px;
+      padding: 4px 7px;
+      border-radius: 4px;
+      color: #b7c7d0;
+      background: rgba(3, 10, 15, 0.64);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <iframe
+      id="video"
+      title="MediaMTX WebRTC video"
+      sandbox="allow-scripts allow-same-origin allow-forms"
+      allow="autoplay; fullscreen"
+      referrerpolicy="no-referrer"></iframe>
+
+    <section class="osd" aria-label="channel diagnostics" aria-live="polite">
+      <div class="row"><span class="key">channel</span><span class="value" id="channel">unavailable</span></div>
+      <div class="row"><span class="key">state</span><span class="state" id="state">unavailable</span></div>
+      <div class="row"><span class="key">FFmpeg PID</span><span class="value" id="pid">unavailable</span></div>
+      <div class="row"><span class="key">input</span><span class="value" id="input">unavailable</span></div>
+      <div class="row"><span class="key">FPS</span><span class="value" id="fps">unavailable</span></div>
+      <div class="row"><span class="key">bitrate</span><span class="value" id="bitrate">unavailable</span></div>
+      <div class="row"><span class="key">frames / dropped</span><span class="value" id="frames">unavailable</span></div>
+      <div class="row"><span class="key">failures / restarts</span><span class="value" id="failures">unavailable</span></div>
+      <div class="row"><span class="key">FFmpeg CPU</span><span class="value" id="cpu">unavailable</span></div>
+      <div class="row"><span class="key">FFmpeg RSS (KiB)</span><span class="value" id="rss">unavailable</span></div>
+    </section>
+
+    <div class="hint">browser overlay · video is unchanged</div>
+  </main>
+
+  <script>
+    "use strict";
+
+    const pathParts = location.pathname.split("/").filter(Boolean);
+    const channel = pathParts.length === 2 && pathParts[0] === "view"
+      ? decodeURIComponent(pathParts[1])
+      : "";
+    const field = (id) => document.getElementById(id);
+    const put = (id, value) => {
+      field(id).textContent = value === null || value === undefined || value === ""
+        ? "unavailable"
+        : String(value);
+    };
+
+    function clearLive() {
+      for (const id of ["pid", "input", "fps", "bitrate", "frames", "cpu", "rss"]) {
+        put(id, null);
+      }
+    }
+
+    function show(data) {
+      clearLive();
+      put("channel", data.id);
+      put("state", data.state);
+      put("pid", data.ffmpeg_pid);
+      put("failures", `${data.consecutive_failures} / ${data.total_restarts}`);
+
+      if (data.input && data.input.status === "available") {
+        put("input", `${data.input.codec} ${data.input.width}x${data.input.height}`);
+      }
+      if (data.progress && data.progress.status === "available") {
+        put("fps", data.progress.fps);
+        put("bitrate", data.progress.bitrate);
+        put("frames", `${data.progress.frames} / ${data.progress.drop_frames}`);
+      }
+      if (data.process_metrics && data.process_metrics.status === "available") {
+        put("cpu", data.process_metrics.cpu_percent === null
+          ? null
+          : `${data.process_metrics.cpu_percent.toFixed(1)}%`);
+        put("rss", data.process_metrics.rss_kib);
+      }
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch(
+          `/v1/channels/${encodeURIComponent(channel)}/metrics`,
+          {cache: "no-store"}
+        );
+        if (!response.ok) {
+          throw new Error("HTTP request failed");
+        }
+        show(await response.json());
+      } catch (error) {
+        clearLive();
+        put("state", null);
+        put("failures", null);
+      }
+    }
+
+    const rawHost = location.hostname.replace(/^\[|\]$/g, "");
+    const mediaHost = rawHost.includes(":") ? `[${rawHost}]` : rawHost;
+    field("video").src = `http://${mediaHost}:8889/${encodeURIComponent(channel)}`;
+    put("channel", channel);
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>

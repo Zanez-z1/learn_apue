@@ -15,13 +15,27 @@
 
 typedef struct gw_http_server gw_http_server;
 
+typedef enum {
+    GW_HTTP_CONTENT_JSON = 0,
+    GW_HTTP_CONTENT_HTML
+} gw_http_content_type;
+
 typedef struct {
     int status_code;
     bool allow_get;
     bool allow_post;
+    gw_http_content_type content_type;
     char body[GW_HTTP_BODY_CAP];
     size_t body_length;
 } gw_http_response;
+
+/* Public response builders allow independent serialization and asset tests. */
+gw_status gw_http_render_channel_metrics(
+    const gw_channel_snapshot *snapshot, gw_http_response *response,
+    gw_error *error);
+
+gw_status gw_http_render_view_page(gw_http_response *response,
+                                   gw_error *error);
 
 /* Router used by the socket server and unit tests. Control routes mutate manager state. */
 gw_status gw_http_route(gw_channel_manager *manager,

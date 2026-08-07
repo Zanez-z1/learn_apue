@@ -88,10 +88,54 @@ static void test_read_only_routes(void)
     CHECK(strstr(response.body, "\"id\":\"cam02\"") != NULL);
     CHECK(strstr(response.body, "\"state\":\"STOPPED\"") != NULL);
 
+    CHECK(gw_http_route(manager, &recording, "GET",
+                        "/v1/channels/cam02/metrics", &response, &error) ==
+          GW_OK);
+    CHECK(response.status_code == 200);
+    CHECK(response.content_type == GW_HTTP_CONTENT_JSON);
+    CHECK(strstr(response.body, "\"ffmpeg_pid\":null") != NULL);
+    CHECK(strstr(response.body, "\"status\":\"unavailable\"") != NULL);
+    CHECK(strstr(response.body, "\"rss_kib\":null") != NULL);
+    CHECK(strstr(response.body, "unit-password") == NULL);
+    CHECK(strstr(response.body, "rtsp://") == NULL);
+
+    CHECK(gw_http_route(manager, &recording, "GET", "/view/cam01", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 200);
+    CHECK(response.content_type == GW_HTTP_CONTENT_HTML);
+    CHECK(strstr(response.body, "const pathParts = location.pathname") != NULL);
+    CHECK(strstr(response.body, "MediaMTX WebRTC video") != NULL);
+    CHECK(strstr(response.body, "setInterval(refresh, 1000)") != NULL);
+    CHECK(strstr(response.body, "/metrics`") != NULL);
+    CHECK(strstr(response.body, "textContent") != NULL);
+    CHECK(strstr(response.body, "browser overlay") != NULL);
+    CHECK(strstr(response.body, "unit-password") == NULL);
+    CHECK(strstr(response.body, "rtsp://") == NULL);
+
     CHECK(gw_http_route(manager, &recording, "GET", "/v1/channels/missing",
                         &response, &error) == GW_OK);
     CHECK(response.status_code == 404);
     CHECK(strstr(response.body, "\"error\":\"not_found\"") != NULL);
+    CHECK(gw_http_route(manager, &recording, "GET",
+                        "/v1/channels/missing/metrics", &response, &error) ==
+          GW_OK);
+    CHECK(response.status_code == 404);
+    CHECK(gw_http_route(manager, &recording, "GET", "/view/missing", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 404);
+    CHECK(gw_http_route(manager, &recording, "GET",
+                        "/view/cam01%22%3E%3Cscript%3E", &response, &error) ==
+          GW_OK);
+    CHECK(response.status_code == 404);
+    CHECK(gw_http_route(manager, &recording, "POST", "/view/cam01", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 405);
+    CHECK(response.allow_get);
+    CHECK(gw_http_route(manager, &recording, "POST",
+                        "/v1/channels/cam01/metrics", &response, &error) ==
+          GW_OK);
+    CHECK(response.status_code == 405);
+    CHECK(response.allow_get);
 
     CHECK(gw_http_route(manager, &recording, "POST", "/v1/channels/cam01",
                         &response, &error) == GW_OK);
@@ -134,6 +178,64 @@ static void test_read_only_routes(void)
     gw_channel_manager_destroy(manager);
 }
 
+static void test_static_page_and_json_escaping(void)
+{
+    gw_channel_snapshot snapshot;
+    gw_channel_config channel;
+    gw_http_response response;
+    gw_error error = {0};
+
+    CHECK(gw_http_render_view_page(&response, &error) == GW_OK);
+    CHECK(response.content_type == GW_HTTP_CONTENT_HTML);
+    CHECK(strstr(response.body, "data-channel=") == NULL);
+    CHECK(strstr(response.body, "innerHTML") == NULL);
+    CHECK(strstr(response.body, "textContent") != NULL);
+
+    make_channel(&channel, "safe", "one");
+    gw_channel_snapshot_init(&snapshot, &channel);
+    snprintf(snapshot.channel_id, sizeof(snapshot.channel_id), "%s",
+             "cam\"line\n");
+    snapshot.state = GW_CHANNEL_RUNNING;
+    snapshot.process_kind = GW_CHANNEL_PROCESS_WORKER;
+    snapshot.process_pid = (pid_t)123;
+    snapshot.has_probe = true;
+    snprintf(snapshot.probe.codec_name, sizeof(snapshot.probe.codec_name), "%s",
+             "h264\"codec");
+    snapshot.probe.width = 1920;
+    snapshot.probe.height = 1080;
+    snapshot.has_progress = true;
+    snapshot.progress.fps = 25.0;
+    snprintf(snapshot.progress.bitrate, sizeof(snapshot.progress.bitrate), "%s",
+             "4k\nbit");
+    snapshot.worker_metrics.pid = (pid_t)123;
+    snapshot.worker_metrics.available = true;
+    snapshot.worker_metrics.cpu_available = true;
+    snapshot.worker_metrics.cpu_percent = 12.5;
+    snapshot.worker_metrics.rss_kib = 8192L;
+    CHECK(gw_http_render_channel_metrics(&snapshot, &response, &error) == GW_OK);
+    CHECK(response.content_type == GW_HTTP_CONTENT_JSON);
+    CHECK(strstr(response.body, "\"id\":\"cam\\\"line\\n\"") != NULL);
+    CHECK(strstr(response.body, "\"codec\":\"h264\\\"codec\"") != NULL);
+    CHECK(strstr(response.body, "\"bitrate\":\"4k\\nbit\"") != NULL);
+    CHECK(strstr(response.body, "\"cpu_percent\":12.500") != NULL);
+    CHECK(strstr(response.body, "unit-password") == NULL);
+    CHECK(strstr(response.body, "rtsp://") == NULL);
+
+    snapshot.state = GW_CHANNEL_BACKOFF;
+    snapshot.process_kind = GW_CHANNEL_PROCESS_NONE;
+    snapshot.process_pid = (pid_t)-1;
+    CHECK(gw_http_render_channel_metrics(&snapshot, &response, &error) == GW_OK);
+    CHECK(strstr(response.body, "\"ffmpeg_pid\":null") != NULL);
+    CHECK(strstr(response.body,
+                 "\"input\":{\"status\":\"unavailable\",\"codec\":null") !=
+          NULL);
+    CHECK(strstr(response.body,
+                 "\"progress\":{\"status\":\"unavailable\",\"fps\":null") !=
+          NULL);
+    CHECK(strstr(response.body, "\"cpu_percent\":null") != NULL);
+    CHECK(strstr(response.body, "\"rss_kib\":null") != NULL);
+}
+
 static void test_snapshot_list_contract(void)
 {
     gw_channel_manager *manager = make_manager();
@@ -154,6 +256,7 @@ int main(void)
 {
     test_read_only_routes();
     test_snapshot_list_contract();
+    test_static_page_and_json_escaping();
     if (failures != 0) {
         fprintf(stderr, "%d HTTP API unit test(s) failed.\n", failures);
         return 1;

@@ -161,6 +161,73 @@ static int expect_response(unsigned int port, const char *request,
     return 0;
 }
 
+static int expect_html_response(unsigned int port, const char *request,
+                                const char *required)
+{
+    char response[131072];
+
+    if (request_http(port, request, strlen(request), response,
+                     sizeof(response)) < 0 ||
+        strstr(response, "HTTP/1.1 200 OK") == NULL ||
+        strstr(response, "Content-Type: text/html; charset=utf-8") == NULL ||
+        strstr(response, "Content-Security-Policy:") == NULL ||
+        strstr(response, "Cache-Control: no-store") == NULL ||
+        strstr(response, required) == NULL ||
+        strstr(response, "http-password") != NULL ||
+        strstr(response, "rtsp://") != NULL) {
+        fprintf(stderr, "unexpected HTML response:\n%s\n", response);
+        return -1;
+    }
+    return 0;
+}
+
+static int wait_for_metrics(unsigned int port, long different_pid,
+                            long *observed_pid)
+{
+    static const char request[] =
+        "GET /v1/channels/cam01/metrics HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    char response[131072];
+    int attempt;
+
+    for (attempt = 0; attempt < 150; ++attempt) {
+        char *pid_field;
+        long pid = -1L;
+
+        if (request_http(port, request, strlen(request), response,
+                         sizeof(response)) == 0 &&
+            strstr(response, "HTTP/1.1 200 OK") != NULL &&
+            strstr(response, "\"state\":\"RUNNING\"") != NULL &&
+            strstr(response, "\"input\":{\"status\":\"available\","
+                             "\"codec\":\"h264\",\"width\":1920,"
+                             "\"height\":1080}") != NULL &&
+            strstr(response, "\"progress\":{\"status\":\"available\"") !=
+                NULL &&
+            strstr(response, "\"fps\":25.000") != NULL &&
+            strstr(response, "\"bitrate\":\"4000kbits/s\"") != NULL &&
+            strstr(response, "\"frames\":") != NULL &&
+            strstr(response, "\"drop_frames\":0") != NULL &&
+            strstr(response, "\"process_metrics\":{\"status\":\"available\"") !=
+                NULL &&
+            strstr(response, "\"cpu_percent\":null") == NULL &&
+            strstr(response, "\"rss_kib\":null") == NULL &&
+            strstr(response, "http-password") == NULL &&
+            strstr(response, "rtsp://") == NULL) {
+            pid_field = strstr(response, "\"ffmpeg_pid\":");
+            if (pid_field != NULL &&
+                sscanf(pid_field, "\"ffmpeg_pid\":%ld", &pid) == 1 &&
+                (different_pid <= 0L || pid != different_pid)) {
+                if (observed_pid != NULL) {
+                    *observed_pid = pid;
+                }
+                return 0;
+            }
+        }
+        pause_milliseconds(20L);
+    }
+    fprintf(stderr, "channel metrics did not become available\n");
+    return -1;
+}
+
 static int wait_for_channel_state(unsigned int port, const char *state,
                                   long different_pid, long *observed_pid)
 {
@@ -312,6 +379,13 @@ int main(int argc, char **argv)
                         "GET /v1/channels/cam01 HTTP/1.1\r\nHost: localhost\r\n\r\n",
                         "HTTP/1.1 200 OK", "\"configuration_generation\":1") <
             0 ||
+        expect_html_response(port,
+                             "GET /view/cam01 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                             "browser overlay") < 0 ||
+        expect_response(port,
+                        "GET /view/missing HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                        "HTTP/1.1 404 Not Found", "\"error\":\"not_found\"") <
+            0 ||
         expect_response(port,
                         "GET /v1/channels/missing HTTP/1.1\r\nHost: localhost\r\n\r\n",
                         "HTTP/1.1 404 Not Found", "\"error\":\"not_found\"") <
@@ -323,6 +397,7 @@ int main(int argc, char **argv)
     }
 
     if (wait_for_channel_state(port, "RUNNING", -1L, &initial_pid) < 0 ||
+        wait_for_metrics(port, -1L, &initial_pid) < 0 ||
         expect_response(port,
                         "GET /v1/channels/cam01/stop HTTP/1.1\r\nHost: localhost\r\n\r\n",
                         "HTTP/1.1 405 Method Not Allowed", "Allow: POST") < 0 ||
@@ -335,6 +410,9 @@ int main(int argc, char **argv)
                         "HTTP/1.1 202 Accepted", "\"action\":\"stop\"") < 0 ||
         wait_for_channel_state(port, "STOPPED", -1L, NULL) < 0 ||
         expect_response(port,
+                        "GET /v1/channels/cam01/metrics HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                        "HTTP/1.1 200 OK", "\"rss_kib\":null") < 0 ||
+        expect_response(port,
                         "POST /v1/channels/cam01/stop HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
                         "HTTP/1.1 409 Conflict", "\"error\":\"state_conflict\"") <
             0 ||
@@ -342,6 +420,7 @@ int main(int argc, char **argv)
                         "POST /v1/channels/cam01/start HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
                         "HTTP/1.1 202 Accepted", "\"action\":\"start\"") < 0 ||
         wait_for_channel_state(port, "RUNNING", initial_pid, &started_pid) < 0 ||
+        wait_for_metrics(port, initial_pid, &started_pid) < 0 ||
         expect_response(port,
                         "POST /v1/channels/cam01/start HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
                         "HTTP/1.1 409 Conflict", "\"error\":\"state_conflict\"") <
@@ -349,7 +428,8 @@ int main(int argc, char **argv)
         expect_response(port,
                         "POST /v1/channels/cam01/restart HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n",
                         "HTTP/1.1 202 Accepted", "\"action\":\"restart\"") < 0 ||
-        wait_for_channel_state(port, "RUNNING", started_pid, &final_pid) < 0) {
+        wait_for_channel_state(port, "RUNNING", started_pid, &final_pid) < 0 ||
+        wait_for_metrics(port, started_pid, &final_pid) < 0) {
         goto cleanup;
     }
     if (process_has_socket_fd(final_pid)) {

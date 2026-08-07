@@ -5,6 +5,8 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <math.h>
 #include <netdb.h>
 #include <poll.h>
@@ -197,6 +199,202 @@ static gw_status finish_response(gw_http_response *response, json_writer *writer
     return GW_OK;
 }
 
+gw_status gw_http_render_channel_metrics(
+    const gw_channel_snapshot *snapshot, gw_http_response *response,
+    gw_error *error)
+{
+    json_writer writer;
+    bool worker_active;
+
+    if (snapshot == NULL || response == NULL) {
+        set_error(error, GW_ERR_ARGUMENT,
+                  "snapshot and HTTP response are required");
+        return GW_ERR_ARGUMENT;
+    }
+    memset(response, 0, sizeof(*response));
+    response->status_code = 200;
+    response->content_type = GW_HTTP_CONTENT_JSON;
+    writer.data = response->body;
+    writer.capacity = sizeof(response->body);
+    writer.length = 0U;
+    writer.failed = false;
+    worker_active = snapshot->process_kind == GW_CHANNEL_PROCESS_WORKER &&
+                    snapshot->process_pid > 0;
+
+    json_append(&writer, "{\"id\":");
+    json_string(&writer, snapshot->channel_id);
+    json_append(&writer, ",\"state\":");
+    json_string(&writer, gw_channel_state_string(snapshot->state));
+    json_append(&writer, ",\"ffmpeg_pid\":");
+    if (worker_active) {
+        json_append(&writer, "%ld", (long)snapshot->process_pid);
+    } else {
+        json_append(&writer, "null");
+    }
+    json_append(&writer,
+                ",\"consecutive_failures\":%u,\"total_restarts\":%llu,"
+                "\"input\":{\"status\":",
+                snapshot->consecutive_failures,
+                (unsigned long long)snapshot->total_restarts);
+    json_string(&writer, worker_active && snapshot->has_probe ? "available"
+                                                             : "unavailable");
+    json_append(&writer, ",\"codec\":");
+    if (worker_active && snapshot->has_probe) {
+        json_string(&writer, snapshot->probe.codec_name);
+        json_append(&writer, ",\"width\":%d,\"height\":%d",
+                    snapshot->probe.width, snapshot->probe.height);
+    } else {
+        json_append(&writer, "null,\"width\":null,\"height\":null");
+    }
+    json_append(&writer, "},\"progress\":{\"status\":");
+    json_string(&writer, worker_active && snapshot->has_progress ? "available"
+                                                                : "unavailable");
+    if (worker_active && snapshot->has_progress) {
+        json_append(&writer, ",\"fps\":");
+        if (isfinite(snapshot->progress.fps)) {
+            json_append(&writer, "%.3f", snapshot->progress.fps);
+        } else {
+            json_append(&writer, "null");
+        }
+        json_append(&writer, ",\"bitrate\":");
+        json_string(&writer, snapshot->progress.bitrate);
+        json_append(&writer, ",\"frames\":%llu,\"drop_frames\":%llu",
+                    (unsigned long long)snapshot->progress.frame,
+                    (unsigned long long)snapshot->progress.drop_frames);
+    } else {
+        json_append(&writer,
+                    ",\"fps\":null,\"bitrate\":null,\"frames\":null,"
+                    "\"drop_frames\":null");
+    }
+    json_append(&writer, "},\"process_metrics\":{\"status\":");
+    json_string(&writer,
+                worker_active && snapshot->worker_metrics.available
+                    ? "available"
+                    : "unavailable");
+    json_append(&writer, ",\"cpu_percent\":");
+    if (worker_active && snapshot->worker_metrics.available &&
+        snapshot->worker_metrics.cpu_available &&
+        isfinite(snapshot->worker_metrics.cpu_percent)) {
+        json_append(&writer, "%.3f", snapshot->worker_metrics.cpu_percent);
+    } else {
+        json_append(&writer, "null");
+    }
+    if (worker_active && snapshot->worker_metrics.available) {
+        json_append(&writer, ",\"rss_kib\":%ld",
+                    snapshot->worker_metrics.rss_kib);
+    } else {
+        json_append(&writer, ",\"rss_kib\":null");
+    }
+    json_append(&writer, "}}\n");
+    return finish_response(response, &writer, error);
+}
+
+static int load_page_file(const char *path, gw_http_response *response)
+{
+    size_t used = 0U;
+    int descriptor = open(path, O_RDONLY | O_CLOEXEC);
+
+    if (descriptor < 0) {
+        return -1;
+    }
+    while (used + 1U < sizeof(response->body)) {
+        ssize_t count = read(descriptor, response->body + used,
+                             sizeof(response->body) - used - 1U);
+
+        if (count > 0) {
+            used += (size_t)count;
+            continue;
+        }
+        if (count == 0) {
+            break;
+        }
+        if (errno != EINTR) {
+            close(descriptor);
+            return -1;
+        }
+    }
+    if (used + 1U == sizeof(response->body)) {
+        char extra;
+        ssize_t count;
+
+        do {
+            count = read(descriptor, &extra, 1U);
+        } while (count < 0 && errno == EINTR);
+        if (count > 0) {
+            close(descriptor);
+            return 1;
+        }
+    }
+    if (close(descriptor) != 0) {
+        return -1;
+    }
+    response->body[used] = '\0';
+    response->body_length = used;
+    return 0;
+}
+
+static bool build_executable_relative_path(char *path, size_t capacity,
+                                           const char *suffix)
+{
+    char *separator;
+    ssize_t length = readlink("/proc/self/exe", path, capacity - 1U);
+    size_t directory_length;
+    size_t suffix_length;
+
+    if (suffix == NULL || length <= 0 || (size_t)length >= capacity) {
+        return false;
+    }
+    path[length] = '\0';
+    separator = strrchr(path, '/');
+    if (separator == NULL) {
+        return false;
+    }
+    directory_length = (size_t)(separator + 1 - path);
+    suffix_length = strlen(suffix);
+    if (directory_length + suffix_length + 1U > capacity) {
+        return false;
+    }
+    memcpy(path + directory_length, suffix, suffix_length + 1U);
+    return true;
+}
+
+gw_status gw_http_render_view_page(gw_http_response *response,
+                                   gw_error *error)
+{
+    char sibling_path[PATH_MAX];
+    int result = -1;
+
+    if (response == NULL) {
+        set_error(error, GW_ERR_ARGUMENT, "HTTP response is required");
+        return GW_ERR_ARGUMENT;
+    }
+    memset(response, 0, sizeof(*response));
+    if (build_executable_relative_path(sibling_path, sizeof(sibling_path),
+                                       "web/diagnostic.html")) {
+        result = load_page_file(sibling_path, response);
+    }
+    if (result < 0) {
+        if (build_executable_relative_path(
+                sibling_path, sizeof(sibling_path),
+                "../share/rk-media-gateway/web/diagnostic.html")) {
+            result = load_page_file(sibling_path, response);
+        }
+    }
+    if (result > 0) {
+        set_error(error, GW_ERR_OVERFLOW,
+                  "diagnostic page exceeds HTTP response capacity");
+        return GW_ERR_OVERFLOW;
+    }
+    if (result < 0) {
+        set_error(error, GW_ERR_IO, "diagnostic page asset is unavailable");
+        return GW_ERR_IO;
+    }
+    response->status_code = 200;
+    response->content_type = GW_HTTP_CONTENT_HTML;
+    clear_error(error);
+    return GW_OK;
+}
+
 static gw_status error_response(gw_http_response *response, int status_code,
                                 const char *code, const char *message,
                                 gw_error *error)
@@ -237,6 +435,31 @@ static bool parse_action_target(const char *target, char *channel_id,
     *action = separator + 1;
     return strcmp(*action, "start") == 0 || strcmp(*action, "stop") == 0 ||
            strcmp(*action, "restart") == 0;
+}
+
+static bool parse_channel_leaf(const char *target, const char *leaf,
+                               char *channel_id, size_t channel_capacity)
+{
+    const char *remainder;
+    const char *separator;
+    size_t id_length;
+
+    if (strncmp(target, "/v1/channels/", 13U) != 0) {
+        return false;
+    }
+    remainder = target + 13;
+    separator = strchr(remainder, '/');
+    if (separator == NULL || separator == remainder ||
+        strcmp(separator + 1, leaf) != 0) {
+        return false;
+    }
+    id_length = (size_t)(separator - remainder);
+    if (id_length >= channel_capacity) {
+        return false;
+    }
+    memcpy(channel_id, remainder, id_length);
+    channel_id[id_length] = '\0';
+    return true;
 }
 
 static gw_status method_not_allowed(gw_http_response *response, bool allow_get,
@@ -354,6 +577,32 @@ gw_status gw_http_route(gw_channel_manager *manager,
         json_append(&writer, "]}\n");
         return finish_response(response, &writer, error);
     }
+    if (strncmp(target, "/view/", 6U) == 0 && target[6] != '\0' &&
+        strchr(target + 6, '/') == NULL) {
+        if (strcmp(method, "GET") != 0) {
+            return method_not_allowed(response, true, false, error);
+        }
+        status = gw_channel_manager_get_snapshot(manager, target + 6, &snapshot,
+                                                 error);
+        if (status != GW_OK) {
+            return error_response(response, 404, "not_found",
+                                  "channel was not found", error);
+        }
+        return gw_http_render_view_page(response, error);
+    }
+    if (parse_channel_leaf(target, "metrics", channel_id,
+                           sizeof(channel_id))) {
+        if (strcmp(method, "GET") != 0) {
+            return method_not_allowed(response, true, false, error);
+        }
+        status = gw_channel_manager_get_snapshot(manager, channel_id, &snapshot,
+                                                 error);
+        if (status != GW_OK) {
+            return error_response(response, 404, "not_found",
+                                  "channel was not found", error);
+        }
+        return gw_http_render_channel_metrics(&snapshot, response, error);
+    }
     if (strncmp(target, "/v1/channels/", 13U) == 0 && target[13] != '\0' &&
         strchr(target + 13, '/') == NULL) {
         if (strcmp(method, "GET") != 0) {
@@ -453,17 +702,30 @@ static bool send_all(int descriptor, const char *data, size_t length)
 
 static void send_response(int descriptor, const gw_http_response *response)
 {
-    char headers[512];
+    char headers[1024];
+    const char *content_type = response->content_type == GW_HTTP_CONTENT_HTML
+                                   ? "text/html; charset=utf-8"
+                                   : "application/json";
+    const char *content_security_policy =
+        response->content_type == GW_HTTP_CONTENT_HTML
+            ? "Content-Security-Policy: default-src 'none'; style-src "
+              "'unsafe-inline'; script-src 'unsafe-inline'; frame-src http:; "
+              "connect-src 'self'; base-uri 'none'; form-action 'none'; "
+              "frame-ancestors 'none'\r\n"
+            : "";
     int length;
 
     length = snprintf(headers, sizeof(headers),
                       "HTTP/1.1 %d %s\r\n"
-                      "Content-Type: application/json\r\n"
+                      "Content-Type: %s\r\n"
                       "Content-Length: %zu\r\n"
                       "Connection: close\r\n"
-                      "X-Content-Type-Options: nosniff\r\n%s%s\r\n",
+                      "Cache-Control: no-store\r\n"
+                      "X-Content-Type-Options: nosniff\r\n"
+                      "Referrer-Policy: no-referrer\r\n%s%s%s\r\n",
                       response->status_code,
-                      reason_phrase(response->status_code), response->body_length,
+                      reason_phrase(response->status_code), content_type,
+                      response->body_length, content_security_policy,
                       response->allow_get && response->allow_post
                           ? "Allow: GET, POST\r\n"
                           : response->allow_get ? "Allow: GET\r\n" : "",

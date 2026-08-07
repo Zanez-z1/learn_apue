@@ -12,6 +12,9 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(LIBYAML REQUIRED IMPORTED_TARGET yaml-0.1)
 
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/web")
+configure_file(web/diagnostic.html web/diagnostic.html COPYONLY)
+
 add_library(gateway_core
     src/api/http_server.c
     src/channel/channel_manager.c
@@ -49,6 +52,7 @@ target_compile_options(gateway-metrics PRIVATE
 install(TARGETS gatewayd gateway-metrics RUNTIME DESTINATION bin)
 install(FILES config/gateway.example.yaml config/mediamtx.example.yml
         DESTINATION share/rk-media-gateway)
+install(FILES web/diagnostic.html DESTINATION share/rk-media-gateway/web)
 install(FILES
         deploy/systemd/rk-media-gateway.service
         deploy/systemd/mediamtx.service

@@ -64,6 +64,14 @@ static void test_snapshot_updates(void)
     CHECK(snapshot.progress.frame == 125U);
     CHECK(strcmp(snapshot.last_event, "progress") == 0);
 
+    gw_channel_snapshot_set_process(&snapshot, GW_CHANNEL_PROCESS_WORKER, 43,
+                                    "worker_started");
+    CHECK(snapshot.process_kind == GW_CHANNEL_PROCESS_WORKER);
+    CHECK(snapshot.process_pid == 43);
+    CHECK(!snapshot.has_progress);
+    gw_channel_snapshot_set_progress(&snapshot, &progress, "progress");
+    CHECK(snapshot.has_progress);
+
     gw_channel_snapshot_clear_process(&snapshot, 143, "probe_timeout");
     CHECK(snapshot.process_kind == GW_CHANNEL_PROCESS_NONE);
     CHECK(snapshot.process_pid == -1);

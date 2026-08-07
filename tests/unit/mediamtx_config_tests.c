@@ -61,6 +61,9 @@ static void test_render_recording_config(void)
     CHECK(strstr(output, "rtmp: false") != NULL);
     CHECK(strstr(output, "hls: false") != NULL);
     CHECK(strstr(output, "webrtc: true") != NULL);
+    CHECK(strstr(output, "webrtcAddress: ':8889'") != NULL);
+    CHECK(strstr(output, "webrtcLocalUDPAddress: ':8189'") != NULL);
+    CHECK(strstr(output, "webrtcIPsFromInterfaces: true") != NULL);
     CHECK(strstr(output, "srt: false") != NULL);
     CHECK(strstr(output, "moq: false") != NULL);
     CHECK(strstr(output, "playback: true") != NULL);

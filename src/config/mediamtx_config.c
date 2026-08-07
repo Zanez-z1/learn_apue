@@ -68,6 +68,8 @@ gw_status gw_mediamtx_render_config(const gw_config *config, char *output,
            "hls: false\n"
            "webrtc: true\n"
            "webrtcAddress: ':8889'\n"
+           "webrtcLocalUDPAddress: ':8189'\n"
+           "webrtcIPsFromInterfaces: true\n"
            "srt: false\n"
            "moq: false\n"
            "playback: %s\n"

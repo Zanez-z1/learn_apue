@@ -109,8 +109,18 @@ static void test_read_only_routes(void)
     CHECK(strstr(response.body, "/metrics`") != NULL);
     CHECK(strstr(response.body, "textContent") != NULL);
     CHECK(strstr(response.body, "browser overlay") != NULL);
+    CHECK(strstr(response.body, "normalizeMediaHost") != NULL);
+    CHECK(strstr(response.body, "media_host") != NULL);
+    CHECK(strstr(response.body, "location.hostname") == NULL);
     CHECK(strstr(response.body, "unit-password") == NULL);
     CHECK(strstr(response.body, "rtsp://") == NULL);
+
+    CHECK(gw_http_route(manager, &recording, "GET",
+                        "/view/cam01?media_host=192.168.1.45", &response,
+                        &error) == GW_OK);
+    CHECK(response.status_code == 200);
+    CHECK(response.content_type == GW_HTTP_CONTENT_HTML);
+    CHECK(strstr(response.body, "192.168.1.45") == NULL);
 
     CHECK(gw_http_route(manager, &recording, "GET", "/v1/channels/missing",
                         &response, &error) == GW_OK);

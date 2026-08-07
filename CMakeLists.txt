@@ -51,6 +51,7 @@ target_compile_options(gateway-metrics PRIVATE
 
 install(TARGETS gatewayd gateway-metrics RUNTIME DESTINATION bin)
 install(FILES config/gateway.example.yaml config/mediamtx.example.yml
+        config/mediamtx.pc-source.yml
         DESTINATION share/rk-media-gateway)
 install(FILES web/diagnostic.html DESTINATION share/rk-media-gateway/web)
 install(FILES
@@ -64,13 +65,24 @@ install(FILES deploy/systemd/gateway.env.example
         DESTINATION share/rk-media-gateway)
 install(FILES docs/deployment.md docs/demo.md
         DESTINATION share/doc/rk-media-gateway)
-install(PROGRAMS scripts/check_media_env.sh scripts/run_transcode_benchmark.sh
+install(PROGRAMS scripts/check_media_env.sh scripts/run_pc_camera_source.sh
+        scripts/run_transcode_benchmark.sh
         scripts/run_capacity_benchmark.sh
         DESTINATION share/rk-media-gateway/scripts)
 
 if(GATEWAY_BUILD_TESTS)
     enable_testing()
     find_program(BASH_PROGRAM bash REQUIRED)
+    find_program(NODE_PROGRAM node)
+    if(NODE_PROGRAM)
+        add_test(NAME gateway_diagnostic_page_tests
+            COMMAND ${NODE_PROGRAM}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/web/diagnostic_page_tests.js
+                ${CMAKE_CURRENT_SOURCE_DIR}/web/diagnostic.html)
+        set_tests_properties(gateway_diagnostic_page_tests PROPERTIES TIMEOUT 5)
+    else()
+        message(STATUS "node not found; browser diagnostic logic test is skipped")
+    endif()
     add_executable(gateway_unit_tests tests/unit/gateway_tests.c)
     target_link_libraries(gateway_unit_tests PRIVATE gateway_core)
     target_compile_options(gateway_unit_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
@@ -166,6 +178,12 @@ if(GATEWAY_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/capacity_runner_tests.sh
             ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_capacity_benchmark.sh)
     set_tests_properties(gateway_capacity_runner_tests PROPERTIES TIMEOUT 5)
+
+    add_test(NAME gateway_pc_camera_source_tests
+        COMMAND ${BASH_PROGRAM}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/pc_camera_source_tests.sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_pc_camera_source.sh)
+    set_tests_properties(gateway_pc_camera_source_tests PROPERTIES TIMEOUT 5)
 
     add_test(NAME gateway_mediamtx_cli_test
         COMMAND ${CMAKE_COMMAND}

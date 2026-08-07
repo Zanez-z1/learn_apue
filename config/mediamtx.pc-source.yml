@@ -1,0 +1,25 @@
+# PC-only RTSP publisher used by the five-minute camera demonstration.
+# WebRTC is intentionally disabled: the RK3588 MediaMTX owns browser delivery.
+logLevel: info
+logDestinations: [stdout]
+
+api: false
+metrics: false
+pprof: false
+playback: false
+
+rtsp: true
+rtspTransports: [tcp]
+rtspAddress: ':8554'
+rtmp: false
+hls: false
+webrtc: false
+srt: false
+moq: false
+
+pathDefaults:
+  source: publisher
+  overridePublisher: false
+
+paths:
+  source:

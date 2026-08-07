@@ -171,7 +171,13 @@ static int expect_html_response(unsigned int port, const char *request,
         strstr(response, "HTTP/1.1 200 OK") == NULL ||
         strstr(response, "Content-Type: text/html; charset=utf-8") == NULL ||
         strstr(response, "Content-Security-Policy:") == NULL ||
+        strstr(response, "frame-src http:") == NULL ||
+        strstr(response, "connect-src 'self'") == NULL ||
+        strstr(response, "object-src 'none'") == NULL ||
+        strstr(response, "frame-ancestors 'none'") == NULL ||
         strstr(response, "Cache-Control: no-store") == NULL ||
+        strstr(response, "Referrer-Policy: no-referrer") == NULL ||
+        strstr(response, "X-Content-Type-Options: nosniff") == NULL ||
         strstr(response, required) == NULL ||
         strstr(response, "http-password") != NULL ||
         strstr(response, "rtsp://") != NULL) {
@@ -380,8 +386,9 @@ int main(int argc, char **argv)
                         "HTTP/1.1 200 OK", "\"configuration_generation\":1") <
             0 ||
         expect_html_response(port,
-                             "GET /view/cam01 HTTP/1.1\r\nHost: localhost\r\n\r\n",
-                             "browser overlay") < 0 ||
+                             "GET /view/cam01?media_host=192.168.1.45 HTTP/1.1\r\n"
+                             "Host: localhost\r\n\r\n",
+                             "normalizeMediaHost") < 0 ||
         expect_response(port,
                         "GET /view/missing HTTP/1.1\r\nHost: localhost\r\n\r\n",
                         "HTTP/1.1 404 Not Found", "\"error\":\"not_found\"") <

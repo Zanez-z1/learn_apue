@@ -8,6 +8,8 @@ file(READ "${SOURCE_DIR}/deploy/systemd/rk-media-gateway.tmpfiles.conf" tmpfiles
 file(READ "${SOURCE_DIR}/deploy/systemd/gateway.env.example" environment)
 file(READ "${SOURCE_DIR}/docs/demo.md" demo)
 file(READ "${SOURCE_DIR}/web/diagnostic.html" diagnostic_page)
+file(READ "${SOURCE_DIR}/config/mediamtx.pc-source.yml" pc_source_config)
+file(READ "${SOURCE_DIR}/scripts/run_pc_camera_source.sh" pc_source_runner)
 
 foreach(required IN ITEMS
         "User=rk-media-gateway"
@@ -52,11 +54,44 @@ foreach(required IN ITEMS
         "MediaMTX WebRTC video"
         "textContent"
         "setInterval(refresh, 1000)"
+        "normalizeMediaHost"
+        "media_host"
         "unavailable"
         "/metrics")
     string(FIND "${diagnostic_page}" "${required}" position)
     if(position EQUAL -1)
         message(FATAL_ERROR "diagnostic page is missing '${required}'")
+    endif()
+endforeach()
+
+foreach(required IN ITEMS
+        "rtspAddress: ':8554'"
+        "rtspTransports: [tcp]"
+        "webrtc: false"
+        "paths:"
+        "source:")
+    string(FIND "${pc_source_config}" "${required}" position)
+    if(position EQUAL -1)
+        message(FATAL_ERROR "PC MediaMTX config is missing '${required}'")
+    endif()
+endforeach()
+
+foreach(required IN ITEMS
+        "--board-ip"
+        "/dev/video0"
+        "MJPEG 1280x720 at 30 fps"
+        "rtsp://127.0.0.1:8554/source"
+        "MediaMTX binary and config must use persistent paths outside /tmp")
+    string(FIND "${pc_source_runner}" "${required}" position)
+    if(position EQUAL -1)
+        message(FATAL_ERROR "PC source runner is missing '${required}'")
+    endif()
+endforeach()
+
+foreach(forbidden IN ITEMS "pkill" "killall")
+    string(FIND "${pc_source_runner}" "${forbidden}" position)
+    if(NOT position EQUAL -1)
+        message(FATAL_ERROR "PC source runner contains broad termination '${forbidden}'")
     endif()
 endforeach()
 

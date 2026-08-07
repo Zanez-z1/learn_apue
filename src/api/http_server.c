@@ -483,7 +483,9 @@ gw_status gw_http_route(gw_channel_manager *manager,
     size_t index;
     gw_status status;
     char channel_id[GW_ID_CAP];
+    char target_path[HTTP_TARGET_CAP];
     const char *action;
+    const char *query;
 
     if (manager == NULL || recording == NULL || method == NULL || target == NULL ||
         response == NULL) {
@@ -497,6 +499,19 @@ gw_status gw_http_route(gw_channel_manager *manager,
     writer.length = 0U;
     writer.failed = false;
     response->status_code = 200;
+
+    query = strchr(target, '?');
+    if (query != NULL) {
+        size_t path_length = (size_t)(query - target);
+
+        if (path_length == 0U || path_length >= sizeof(target_path)) {
+            return error_response(response, 400, "bad_request",
+                                  "request target is invalid", error);
+        }
+        memcpy(target_path, target, path_length);
+        target_path[path_length] = '\0';
+        target = target_path;
+    }
 
     if (strcmp(target, "/v1/health") == 0) {
         size_t running = 0U;
@@ -711,7 +726,7 @@ static void send_response(int descriptor, const gw_http_response *response)
             ? "Content-Security-Policy: default-src 'none'; style-src "
               "'unsafe-inline'; script-src 'unsafe-inline'; frame-src http:; "
               "connect-src 'self'; base-uri 'none'; form-action 'none'; "
-              "frame-ancestors 'none'\r\n"
+              "object-src 'none'; frame-ancestors 'none'\r\n"
             : "";
     int length;
 

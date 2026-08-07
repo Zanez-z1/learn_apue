@@ -705,6 +705,33 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
   PC 未推流时 cam01 已重新进入退避，当前字段为 unavailable。真实 `FAILED` 后恢复画面仍
   等待用户启动 PC 推流，不能据此标为 PASS。
 
+### 当前增量：五分钟演示拓扑收口
+
+- 审计确认旧 OSD 文档和页面把 8889 TCP SSH 转发当成完整 WebRTC，这是错误结论。板端
+  实际由 MediaMTX PID 928 监听 `*:8889/TCP` 和 `*:8189/UDP`；gatewayd PID 580812 只监听
+  `127.0.0.1:9080`。推荐拓扑改为仅 SSH 转发 9080，浏览器通过真实板卡 IP 直连
+  8889 信令和 8189 ICE 媒体。
+- `/view/{id}` 现在接受经过严格校验的 `media_host` 查询参数；HTTP 路由只用查询参数前的
+  path 查找通道，不回显参数。页面处理 IPv4、IPv6 和 DNS 主机名，拒绝端口、路径、凭据、
+  空白和 IPv6 zone ID。CSP 继续禁止外部脚本和非自身 JSON 请求，iframe 只允许 HTTP。
+- 页面在首次输入离线时保留 OSD；非 RUNNING 回到 RUNNING 时重载一次播放器，连续
+  RUNNING 或临时 JSON 失败不做无意义重载。
+- 新增 PC 专用 MediaMTX 配置和 `run_pc_camera_source.sh`。二进制/配置必须位于持久目录，
+  PC WebRTC 等无关协议关闭；脚本检查摄像头格式、路由 IP、8554 冲突和本机 RTSP 输出，
+  只停止本轮记录的明确 PID。当前 PC 发现旧 MediaMTX PID 193951 使用持久目录
+  `/home/zane/mediamtx/source.yml` 占用 8554，真实清洁演示前需从原终端正常停止；当前没有
+  `/dev/video0`，真实摄像头验收仍为 `PENDING`。
+- 页面行为、PC 源预检、HTTP/CSP、状态机、supervisor 和一次性耗尽语义关键回归 8/8
+  PASS，随后 Debug 完整 CTest 33/33 PASS。ASan/UBSan、TSan、重新部署和真实浏览器/WebRTC
+  验收尚未执行，均为 `PENDING`，不能用本轮自动化结果替代。
+- 现有恢复版的真实后端时间线已得到补充证据：gatewayd PID 580812 从 13:20:30 保持不变，
+  13:25:07、13:25:37、13:26:07、13:26:37 连续按 30 秒处于 FAILED；PC MediaMTX 于
+  13:24:32 启动但无发布，摄像头 FFmpeg 到 13:29:38 才启动。gatewayd 随后自动以探测 PID
+  613458 成功，工作 PID 613691 于 13:29:47 回到 RUNNING，13:30:47 stable；当前约 25 FPS、
+  丢帧 0、CPU 13.9%、RSS 19636 KiB。这证明“长期 FAILED 后后端无人值守恢复”为 PASS。
+  该次仍使用旧 PC 手工进程和尚未修正拓扑的已部署页面，因此新版单脚本、浏览器自动出画
+  和重复 `s`/`r` 恢复仍为 PENDING。
+
 ## 5. 当前能力边界
 
 已经具备：
@@ -725,8 +752,8 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 - 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的退避及自动恢复。
 - systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
 - 可安装的 C17 进程指标采样工具及原始/汇总 CSV 输出。
-- gatewayd 后台采样每路 FFmpeg CPU/RSS，并通过轻量浏览器诊断页显示 WebRTC 画面和
-  一秒刷新 OSD。
+- gatewayd 后台采样每路 FFmpeg CPU/RSS，并通过需要受校验 `media_host` 的轻量浏览器
+  诊断页显示 WebRTC 画面和一秒刷新 OSD；新版真实浏览器验收仍为 PENDING。
 
 当前限制：
 
@@ -736,11 +763,11 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
 
 ## 6. 后置验收队列
 
-原定软件功能没有剩余开发项。以下只在外部条件和时间窗口具备时执行：
+当前优先收口五分钟演示闭环，不进入 AI 或其他 Phase 扩展。剩余项按顺序为：
 
-1. 使用第二个真实 RTSP 源完成双真实输入隔离和在线资源验收。
-2. 依次完成 30 分钟、2 小时和最终 24 小时稳定性趋势记录。
-3. 音频属于排除范围；只有用户另立扩展目标时才设计和实现。
+1. 完整门禁、板端重新部署和单路真实浏览器/WebRTC 长期离线恢复验收。
+2. 使用第二个真实 RTSP 源完成双真实输入隔离和在线资源验收。
+3. 30 分钟及更长稳定性、音频和 AI 均不在当前目标内。
 
 ## 7. 文档职责
 

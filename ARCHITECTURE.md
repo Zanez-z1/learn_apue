@@ -105,21 +105,41 @@ systemd/信号 ------>| Process Manager                |
 
 `gatewayd` 使用 `posix_spawnp()` 或等价的安全进程创建接口构造参数数组，不通过 `/bin/sh -c` 拼接命令，避免配置内容造成命令注入。
 
-### 5.2 MediaMTX 独立运行
+### 5.2 演示网络拓扑
+
+PC 和板卡上的两个 MediaMTX 职责不同：PC 实例只把 USB 摄像头转换成局域网 RTSP 输入，
+板卡实例才接收硬件处理后的 `cam01`，并向浏览器提供 WebRTC。推荐演示连接为：
+
+```text
+PC /dev/video0 -> PC FFmpeg -> PC MediaMTX :8554/source
+                                  |
+                                  v RTSP/TCP
+RK3588 gatewayd -> FFmpeg-Rockchip MPP/RGA -> board MediaMTX 127.0.0.1:8554/cam01
+                                                    |              |
+browser <- direct BOARD_IP:8889 WebRTC HTTP --------+              |
+browser <- direct BOARD_IP:8189/UDP ICE media ----------------------+
+browser <- SSH -L 9080 -> gatewayd 127.0.0.1:9080 page and JSON
+```
+
+9080 API 没有认证，因此继续只监听回环地址并通过 SSH 转发。8889 是 WebRTC HTTP 信令和
+播放器入口，8189 是 ICE 媒体端口；只增加 8889 TCP 隧道不能替代浏览器到板卡的 ICE
+连接。页面通过受校验的 `media_host` 查询参数取得板卡地址，源代码不硬编码部署 IP。
+
+### 5.3 MediaMTX 独立运行
 
 MediaMTX 作为单独的 systemd 服务运行，负责流协议转换、播放端接入和录像。`gatewayd` 只向固定的本地路径发布视频流，不在自身内部重复实现流媒体服务器。
 
-### 5.3 配置文件是通道定义的唯一来源
+### 5.4 配置文件是通道定义的唯一来源
 
 所有通道 ID、输入地址、转码参数、输出路径和重试策略均来自配置文件。启动时完成完整校验，配置不合法时拒绝创建对应通道，并输出明确错误。
 
-### 5.4 先使用结构化进度输出，再解析普通日志
+### 5.5 先使用结构化进度输出，再解析普通日志
 
 FFmpeg 工作进程启用 `-progress pipe:1`，由 `gatewayd` 解析 `frame`、`fps`、`bitrate`、`out_time`、`drop_frames` 和 `speed` 等键值。
 
 标准错误流只用于错误诊断，不依赖不稳定的人类可读日志格式计算运行指标。
 
-### 5.5 按职责选择实现技术
+### 5.6 按职责选择实现技术
 
 嵌入式 Linux 主线继续使用 C17：进程生命周期、状态机、信号、线程同步、`/proc` 采样、
 配置和 HTTP 控制都属于常驻服务核心，需要可预测的资源使用和清晰的系统调用边界。
@@ -210,13 +230,17 @@ gatewayd 外部增加认证、加密和网络访问控制。
 
 #### Browser Diagnostic View
 
-`/view/{id}` 返回项目安装的单文件原生 HTML/CSS/JavaScript。页面以 iframe 嵌入对应的
-MediaMTX WebRTC 页面，并用 DOM `textContent` 在左上角覆盖 gatewayd JSON 指标。视频和
-指标保持两个来源：MediaMTX 提供画面，gatewayd 提供状态、进度和 FFmpeg CPU/RSS。
+`/view/{id}?media_host=BOARD_IP` 返回项目安装的单文件原生 HTML/CSS/JavaScript。页面只
+接受合法 IPv4、IPv6 或 DNS 媒体主机，拒绝端口、路径、凭据和 IPv6 zone ID，然后以
+iframe 直连对应的板端 MediaMTX WebRTC 页面，并用 DOM `textContent` 在左上角覆盖
+gatewayd JSON 指标。视频和指标保持两个来源：MediaMTX 提供画面，gatewayd 提供状态、
+进度和 FFmpeg CPU/RSS。查询参数不会被服务器响应回显，页面也不包含输入 RTSP URL。
 
 该页面不修改视频帧，不增加 FFmpeg 滤镜或编码步骤，也不会把 OSD 写入实时流或录像。
 它只是嵌入式诊断界面，不演变为用户、告警、录像管理或 AI 前端。页面每秒刷新；字段
 不可用时主动显示 `unavailable`，PID 更换时不得沿用旧进程数据。
+页面初次打开时即使输入不存在，也会保留 OSD 并显示 BACKOFF/FAILED；状态从非 RUNNING
+回到 RUNNING 时只重载一次播放器，连续 RUNNING 或短暂 JSON 请求失败不会反复重载。
 
 ### 6.2 FFmpeg-Rockchip Worker
 

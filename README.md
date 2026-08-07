@@ -14,7 +14,60 @@ RTSP 输入 -> gatewayd 监督的 FFmpeg-Rockchip -> MPP/RGA -> MediaMTX -> 浏�
 子进程监督、单通道故障隔离、配置热重载、硬件媒体链路和可复现测试。当前没有自行开发
 Web 管理前端、音频或 AI。
 
-当前 Phase 5 软件与短时实板范围已经完成，具备：
+## 五分钟真实摄像头演示
+
+前提是 PC 与板卡在同一可信局域网，板卡已经按部署文档安装服务，PC 的 MediaMTX v1.20
+二进制位于持久目录（示例为 `$HOME/mediamtx/mediamtx`）。当前实板地址是
+`192.168.1.45`；换网络后只替换以下 `BOARD_IP` 和浏览器 URL 中的同一个地址。
+
+先确认板端服务，不要重启它：
+
+```bash
+BOARD_IP=192.168.1.45
+ssh cat@$BOARD_IP 'systemctl is-active rk-media-gateway.service mediamtx.service'
+```
+
+在 PC 项目目录先做检查，再启动专用 PC MediaMTX 和摄像头 FFmpeg：
+
+```bash
+./scripts/run_pc_camera_source.sh \
+  --board-ip "$BOARD_IP" \
+  --mediamtx "$HOME/mediamtx/mediamtx" \
+  --check-only
+
+./scripts/run_pc_camera_source.sh \
+  --board-ip "$BOARD_IP" \
+  --mediamtx "$HOME/mediamtx/mediamtx"
+```
+
+脚本明确检查 `/dev/video0`、MJPEG 1280×720@30、PC 路由地址和 TCP 8554 冲突，并使用
+[PC 专用配置](config/mediamtx.pc-source.yml)关闭不需要的 WebRTC。若 8554 已被占用，先回到
+那个已知服务的终端正常停止；脚本不会用 `pkill` 误杀其他进程。看到 `[READY]` 后保持终端
+运行。
+
+另开 PC 终端，只转发无认证、回环监听的 gatewayd 9080：
+
+```bash
+ssh -N -L 9080:127.0.0.1:9080 cat@$BOARD_IP
+```
+
+唯一推荐演示 URL 是：
+
+```text
+http://127.0.0.1:9080/view/cam01?media_host=192.168.1.45
+```
+
+预期同一页面显示 WebRTC 实时画面，以及 state、FFmpeg PID、输入编码/分辨率、FPS、码率、
+帧数/丢帧、失败/重启计数和 CPU/RSS。结束时分别在摄像头源终端和 SSH 隧道终端按
+`Ctrl+C`；源脚本只清理本轮启动的两个明确 PID。需要演示重复断流时，在源脚本终端输入
+`s` 只停止 FFmpeg，观察离线后输入 `r` 恢复发布；PC MediaMTX 在两步之间保持运行。
+
+网络上，SSH 隧道只承载 gatewayd 页面和 JSON（9080）。iframe 从浏览器直接访问板卡
+MediaMTX `BOARD_IP:8889` 完成 WebRTC HTTP 信令，媒体数据直接走板卡 `8189/UDP` ICE；
+因此不能把 `-L 8889` 当作完整 WebRTC 隧道。详细原理、故障恢复和手工排查见
+[完整演示指南](docs/demo.md)。
+
+当前已实现的主要能力包括：
 
 - YAML 配置读取、环境变量展开及边界校验。
 - RTSP URL 密码脱敏。
@@ -31,7 +84,7 @@ Web 管理前端、音频或 AI。
 - 提供录像文件系统容量、最低空闲阈值和降级状态查询。
 - RK3588 媒体环境检查脚本。
 
-Phase 4 已完成开发机测试和 RK3588 单路实机验收：PC 摄像头可经 RTSP 输入、MPP/RGA
+历史 Phase 4 已完成开发机测试和 RK3588 单路实机验收：PC 摄像头可经 RTSP 输入、MPP/RGA
 硬件转码、MediaMTX 录像与回放，并由 systemd 以非 root 账号开机启动和异常恢复。
 Phase 5 已完成短时软硬件性能、分辨率、码率、重复固定样本容量和画面时间戳延迟测试。
 当前媒体链路只有视频，不采集或输出音频；长时间压力和多路真实输入留待后续验收。
@@ -61,7 +114,7 @@ Phase 5 已完成短时软硬件性能、分辨率、码率、重复固定样本
 第一次运行只需要 `docs/demo.md`。`docs/test-plan.md` 和 `docs/development-status.md` 是
 开发证据，不是入门教程。
 
-## 五分钟能展示什么
+## 演示重点
 
 1. 浏览器播放经 RK3588 MPP/RGA 转码后的真实画面。
 2. HTTP 查询通道 PID、状态、FPS、帧数和重启次数。
@@ -69,8 +122,8 @@ Phase 5 已完成短时软硬件性能、分辨率、码率、重复固定样本
 4. 单独停止、启动或重启 `cam01`，网关和其他通道无需整体重启。
 5. 展示固定样本下软件路径与 MPP/RGA 的 CPU、RSS 和吞吐实测。
 
-完整命令和每个终端的职责见 `docs/demo.md`。求职时应展示这条工程链路，不应把项目描述
-成比成熟摄像头 App 功能更多的消费级监控产品。
+本页开头给出唯一推荐命令。求职时应展示这条工程链路，不应把项目描述成比成熟摄像头
+App 功能更多的消费级监控产品。
 
 ## 构建
 
@@ -134,18 +187,19 @@ curl -X POST http://127.0.0.1:9080/v1/channels/cam01/restart
 
 每路通道还有一个轻量诊断页面。它使用原生 HTML/CSS/JavaScript，在浏览器中把
 gatewayd 指标覆盖到 MediaMTX WebRTC 画面上方；OSD 不修改或重新编码视频，也不会写入
-录像。由于 gatewayd 默认只监听回环地址，推荐从 PC 同时转发诊断页和 WebRTC HTTP 端口：
+录像。由于 gatewayd 默认只监听回环地址，只从 PC 转发诊断页/API 的 9080：
 
 ```bash
 ssh -N \
   -L 9080:127.0.0.1:9080 \
-  -L 8889:127.0.0.1:8889 \
   cat@BOARD_IP
 ```
 
-然后打开 `http://127.0.0.1:9080/view/cam01`；第二路对应 `/view/cam02`。页面只是嵌入式
-诊断界面，不是带用户、告警或录像管理功能的复杂监控前端。画面由 MediaMTX 提供，状态、
-FPS、帧数、丢帧、重启计数和 FFmpeg CPU/RSS 由 gatewayd 提供并每秒刷新。
+然后打开 `http://127.0.0.1:9080/view/cam01?media_host=BOARD_IP`；第二路只替换为
+`/view/cam02?media_host=BOARD_IP`。`media_host` 只接受合法 IPv4、IPv6 或 DNS 主机名，
+不接受端口、路径、凭据或 IPv6 zone ID，也不会被响应回显。页面只是嵌入式诊断界面，
+不是带用户、告警或录像管理功能的复杂监控前端。画面由浏览器直连板卡 MediaMTX
+8889/8189 提供；状态和 FFmpeg 指标由 gatewayd 每秒刷新。
 
 当前 HTTP 服务没有身份认证，默认回环监听是安全边界，不应直接暴露到不受信任的网络。
 监听地址、端口和启用状态的修改需要重启 `gatewayd`，不会通过 SIGHUP 生效。

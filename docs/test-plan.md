@@ -1796,8 +1796,12 @@ ctest --test-dir build --output-on-failure \
 
 检查点：
 
-- `/view/cam01` 返回独立 `web/diagnostic.html`，Content-Type 为 HTML，并带 CSP、
+- `/view/cam01?media_host=BOARD_IP` 返回独立 `web/diagnostic.html`，Content-Type 为 HTML，并带 CSP、
   no-store、nosniff 和 no-referrer。
+- `media_host` 接受合法 IPv4、IPv6 和 DNS 主机名，拒绝端口、路径、凭据、空白、越界 IPv4
+  和 IPv6 zone ID；查询值不回显到响应。
+- 页面先处于 BACKOFF/FAILED 再进入 RUNNING 时播放器只重载一次；连续 RUNNING 和临时
+  JSON 失败不会重复重载。
 - `/v1/channels/cam01/metrics` 返回 JSON；不存在通道为 404，错误方法为 405。
 - 页面不插入通道字符串，只从已经过服务端通道存在性校验的 URL 路径读取 ID；指标更新
   使用 `textContent`，JSON 引号、换行和控制字符正确转义。
@@ -1829,11 +1833,12 @@ TSan：适用 8/8 PASS
 ```bash
 ssh -N \
   -L 9080:127.0.0.1:9080 \
-  -L 8889:127.0.0.1:8889 \
   cat@192.168.1.45
 ```
 
-浏览器打开 `http://127.0.0.1:9080/view/cam01`，并在另一个终端连续观察原始 JSON：
+浏览器必须通过真实板卡 IP 直连 `8889/TCP` 信令和 `8189/UDP` ICE 媒体；不能把 8889
+TCP 隧道作为替代。打开
+`http://127.0.0.1:9080/view/cam01?media_host=192.168.1.45`，并在另一个终端连续观察原始 JSON：
 
 ```bash
 while true; do
@@ -1844,11 +1849,13 @@ done
 
 必须实际确认：
 
-1. WebRTC 真实画面和左上角 OSD 同时可见；页面源代码没有视频 URL 或密码。
+1. WebRTC 真实画面和左上角 OSD 同时可见；页面源代码没有部署 IP、RTSP URL 或密码。
 2. 状态为 RUNNING，输入编码/分辨率正确，FPS、累计帧数、丢帧和 CPU/RSS 每秒刷新。
 3. 停止 PC 推流后显示 BACKOFF，当前 FFmpeg PID、progress 和 CPU/RSS 显示 unavailable。
 4. 恢复同一输入后出现不同的 FFmpeg PID 并回到 RUNNING，健康通道继续工作。
 5. 录制一小段后回放检查不包含 OSD，证明覆盖层没有写入视频帧。
+6. 在 PC 源脚本输入 `s` 只停止 FFmpeg、保持 PC MediaMTX，再输入 `r` 恢复；确认页面第二次
+   自动恢复且 FFmpeg PID 再次变化。
 
 这是一轮短时功能验收，不运行 30 分钟及更长稳定性测试。浏览器截图可以作为人工可见
 证据，但必须同时保存脱敏 JSON、服务状态和精确时间段，不能只写“看起来正常”。
@@ -1858,8 +1865,8 @@ done
 条件允许时用两台 PC 分别发布两个真实摄像头源，启用 cam01/cam02，并同时打开：
 
 ```text
-http://127.0.0.1:9080/view/cam01
-http://127.0.0.1:9080/view/cam02
+http://127.0.0.1:9080/view/cam01?media_host=BOARD_IP
+http://127.0.0.1:9080/view/cam02?media_host=BOARD_IP
 ```
 
 停止其中一路后，仅对应页面允许进入 BACKOFF/unavailable；另一路画面和指标必须持续更新。
@@ -1879,10 +1886,68 @@ http://127.0.0.1:9080/view/cam02
 离线输入：BACKOFF；PID、输入、progress、CPU、RSS 均为 unavailable，符合预期
 页面静态验收：HTTP 200、Content-Type/CSP/no-store/nosniff/no-referrer PASS
 页面资源：板卡与开发机 SHA-256 一致
+旧 9080+8889 SSH 隧道拓扑：FAIL（缺少 8189 ICE；结论已撤回）
+新版 media_host 页面自动化：PASS（IPv4/IPv6/DNS、非法输入、必要重载）
+新版 PC 源预检自动化：PASS（格式、路由、端口冲突、无宽泛 kill）
+新版真实 WebRTC/OSD：PENDING（尚未重新部署，PC 当前无 /dev/video0）
 30 分钟及更长稳定性：不在本轮执行
 长期离线超过 max_retries 后无人值守恢复：PENDING（必须由用户真实推流验收）
 恢复修复部署：PASS（2026-08-07 13:20:30 CST，gatewayd PID 580812，服务 active）
 部署一致性：PASS（已安装 gatewayd/diagnostic.html 与板端 staging SHA-256 一致）
+```
+
+### 8.11 五分钟演示闭环重新验收
+
+本节取代旧的 9080+8889 SSH 双隧道步骤。自动化门禁：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --parallel
+ctest --test-dir build-release --output-on-failure
+
+ASAN_OPTIONS=detect_leaks=0 \
+  ctest --test-dir build-sanitize --output-on-failure
+ctest --test-dir build-tsan --output-on-failure
+```
+
+必须确认 `gateway_diagnostic_page_tests` 覆盖媒体主机校验和播放器重载，
+`gateway_pc_camera_source_tests` 覆盖预检失败诊断与无宽泛 kill；HTTP 单元/端到端覆盖带查询
+参数页面、CSP/no-store/nosniff/no-referrer，状态机和 supervisor 回归继续通过。Node 只用于
+开发机执行原生页面脚本测试，不安装到板卡，也不是运行时依赖；无 Node 的板端该项记为
+`SKIPPED`，不能记作 PASS。
+
+真实验收严格顺序：
+
+1. 停止 PC 旧 source，确认 8554 无监听；板端 gatewayd/MediaMTX 已启动，记录 gatewayd PID。
+2. PC 不启动摄像头源，等待 `failures > max_retries`，再至少观察一个完整 30 秒 FAILED
+   低频探测周期。浏览器页面应始终显示状态和 unavailable，而不是空白或过期数据。
+3. 浏览器只通过 `-L 9080` 访问页面，并以真实板卡 IP 作为 `media_host`；PC 到板卡
+   8889/TCP 和 8189/UDP 必须直接可达。
+4. 启动 PC 源脚本，不调用 HTTP start/restart、不重启任何板端服务。保存
+   `FAILED -> PROBING -> STARTING -> RUNNING`、同一 gatewayd PID、新工作 PID、约 25 FPS、
+   丢帧、CPU/RSS 和浏览器自动出现画面的证据。
+5. 在 PC 源脚本输入 `s` 只停止 FFmpeg，保持 PC MediaMTX；看到离线后输入 `r`，再次验证
+   新工作 PID和页面自动恢复。
+6. Ctrl+C 结束源脚本和 SSH 隧道，确认只清理本轮 PC 子进程且板端服务仍 active。
+
+当前记录：
+
+```text
+页面/PC 源/HTTP/状态机关键回归：8/8 PASS
+Debug 完整 CTest：33/33 PASS
+Release 完整 CTest：PENDING
+ASan/UBSan：PENDING
+TSan：PENDING
+板端新版部署：PENDING
+PC /dev/video0：PENDING（当前未连接）
+FAILED 30 秒低频周期后后端恢复：PASS（gatewayd 580812 未变，worker 613691）
+重复停止/恢复 PC FFmpeg：PENDING
+真实浏览器 WebRTC+OSD 自动恢复：PENDING
+30 分钟及更长稳定性：SKIPPED（不在本目标内）
 ```
 
 ## 9. 阶段验收记录模板

@@ -133,5 +133,7 @@ systemd 向 gatewayd 发送 SIGTERM。gatewayd 先通知并回收每个 supervis
   或受控反向代理。
 - 生成的 MediaMTX 配置只启用 TCP RTSP、WebRTC 和按需 playback；未使用的 RTMP、HLS、
   SRT 和 MoQ 显式关闭，避免版本新增协议默认开启或 MoQ 自动证书写入与只读服务冲突。
+- WebRTC 明确监听 8889/TCP 信令和 8189/UDP ICE，并从板卡接口收集候选地址。9080 仍只
+  监听回环并通过 SSH 转发；浏览器应直连板卡 8889/8189，不能用 8889 TCP 隧道代替 ICE。
 - 环境文件建议 0600，YAML 建议 0640；真实 URL 密码不得进入仓库或测试记录。
 - 设备节点和媒体软件版本依赖板卡系统，服务文件不能证明 MPP/RGA 或真实录像已通过。

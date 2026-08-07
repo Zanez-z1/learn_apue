@@ -251,14 +251,14 @@ if(GATEWAY_BUILD_TESTS)
         COMMAND gateway_recovery_tests
                 $<TARGET_FILE:gateway_process_fixture> input)
     set_tests_properties(gateway_input_recovery_tests PROPERTIES
-        TIMEOUT 10
+        TIMEOUT 15
         FAIL_REGULAR_EXPRESSION "fixture-password")
 
     add_test(NAME gateway_publish_recovery_tests
         COMMAND gateway_recovery_tests
                 $<TARGET_FILE:gateway_process_fixture> publish)
     set_tests_properties(gateway_publish_recovery_tests PROPERTIES
-        TIMEOUT 10
+        TIMEOUT 15
         FAIL_REGULAR_EXPRESSION "fixture-password")
 
     add_executable(gateway_process_tests tests/integration/process_manager_tests.c)

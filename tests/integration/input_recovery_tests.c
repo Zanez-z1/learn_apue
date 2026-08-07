@@ -105,7 +105,7 @@ static bool wait_for_recovery(gw_channel_manager *manager,
     gw_error error = {0};
     int attempt;
 
-    for (attempt = 0; attempt < 200; ++attempt) {
+    for (attempt = 0; attempt < 500; ++attempt) {
         if (gw_channel_manager_get_snapshot(manager, "cam02", snapshot, &error) ==
                 GW_OK &&
             snapshot->state == GW_CHANNEL_RUNNING &&

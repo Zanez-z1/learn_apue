@@ -1939,9 +1939,9 @@ ctest --test-dir build-tsan --output-on-failure
 ```text
 页面/PC 源/HTTP/状态机关键回归：8/8 PASS
 Debug 完整 CTest：33/33 PASS
-Release 完整 CTest：PENDING
-ASan/UBSan：PENDING
-TSan：PENDING
+Release 完整 CTest：33/33 PASS
+ASan/UBSan：33/33 PASS（detect_leaks=0，既有 ptrace 环境约束）
+TSan：适用 8/8 PASS
 板端新版部署：PENDING
 PC /dev/video0：PENDING（当前未连接）
 FAILED 30 秒低频周期后后端恢复：PASS（gatewayd 580812 未变，worker 613691）
@@ -1949,6 +1949,11 @@ FAILED 30 秒低频周期后后端恢复：PASS（gatewayd 580812 未变，worke
 真实浏览器 WebRTC+OSD 自动恢复：PENDING
 30 分钟及更长稳定性：SKIPPED（不在本目标内）
 ```
+
+首轮 ASan/UBSan 为 32/33：`gateway_publish_recovery_tests` 的固定 4 秒观察窗口在 sanitizer
+子进程启动开销下先超时，随后日志才出现预期第一次 BACKOFF，无 sanitizer 错误。现将观察
+窗口改为 10 秒、CTest 上限 15 秒；这只修复测试时序，不修改生产重试周期。单项复跑和随后
+完整 ASan/UBSan 33/33 均 PASS。
 
 ## 9. 阶段验收记录模板
 

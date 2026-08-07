@@ -731,6 +731,10 @@ Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入�
   丢帧 0、CPU 13.9%、RSS 19636 KiB。这证明“长期 FAILED 后后端无人值守恢复”为 PASS。
   该次仍使用旧 PC 手工进程和尚未修正拓扑的已部署页面，因此新版单脚本、浏览器自动出画
   和重复 `s`/`r` 恢复仍为 PENDING。
+- 首轮 ASan/UBSan 完整门禁中 publish recovery 在 4 秒轮询窗口截止后才进入第一次退避，
+  32/33 PASS；日志没有 sanitizer 报告。测试观察窗口放宽到 10 秒、CTest 上限 15 秒，生产
+  退避配置不变。该用例单独复跑 PASS，随后 ASan/UBSan 完整 33/33 PASS；Release 33/33、
+  适用 TSan 8/8 也通过。最终提交后的 Debug/Release 顺序复跑仍按测试计划执行。
 
 ## 5. 当前能力边界
 

@@ -1,25 +1,11 @@
 /* Incrementally assemble and decode FFmpeg key=value progress records. */
 #include "gateway/progress_parser.h"
+#include "gateway/error.h"
 
 #include <errno.h>
 #include <math.h>
-#include <stdarg.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static void set_error(gw_error *error, gw_status code, const char *format, ...)
-{
-    va_list arguments;
-
-    if (error == NULL) {
-        return;
-    }
-    error->code = code;
-    va_start(arguments, format);
-    vsnprintf(error->message, sizeof(error->message), format, arguments);
-    va_end(arguments);
-}
 
 void gw_progress_parser_init(gw_progress_parser *parser)
 {
@@ -127,7 +113,7 @@ gw_status gw_progress_parser_consume(gw_progress_parser *parser,
 
     if (parser == NULL || (data == NULL && data_length != 0U) || progress == NULL ||
         completed == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "invalid progress parser arguments");
+        gw_error_set(error, GW_ERR_ARGUMENT, "invalid progress parser arguments");
         return GW_ERR_ARGUMENT;
     }
     *completed = false;
@@ -149,7 +135,7 @@ gw_status gw_progress_parser_consume(gw_progress_parser *parser,
         } else {
             if (parser->line_length + 1U >= sizeof(parser->line)) {
                 parser->line_length = 0U;
-                set_error(error, GW_ERR_OVERFLOW,
+                gw_error_set(error, GW_ERR_OVERFLOW,
                           "FFmpeg progress line exceeds %u bytes",
                           (unsigned int)GW_PROGRESS_LINE_CAP - 1U);
                 return GW_ERR_OVERFLOW;
@@ -157,9 +143,6 @@ gw_status gw_progress_parser_consume(gw_progress_parser *parser,
             parser->line[parser->line_length++] = byte;
         }
     }
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
+    gw_error_clear(error);
     return GW_OK;
 }

@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 
 #include "gateway/http_server.h"
+#include "gateway/error.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -40,27 +41,6 @@ struct gw_http_server {
     bool thread_started;
     atomic_bool stop_requested;
 };
-
-static void set_error(gw_error *error, gw_status code, const char *format, ...)
-{
-    va_list arguments;
-
-    if (error == NULL) {
-        return;
-    }
-    error->code = code;
-    va_start(arguments, format);
-    vsnprintf(error->message, sizeof(error->message), format, arguments);
-    va_end(arguments);
-}
-
-static void clear_error(gw_error *error)
-{
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
-}
 
 static void json_append(json_writer *writer, const char *format, ...)
 {
@@ -148,15 +128,6 @@ static void json_snapshot(json_writer *writer,
     } else {
         json_append(writer, "null");
     }
-    json_append(writer, ",\"probe\":");
-    if (snapshot->has_probe) {
-        json_append(writer, "{\"codec\":");
-        json_string(writer, snapshot->probe.codec_name);
-        json_append(writer, ",\"width\":%d,\"height\":%d}",
-                    snapshot->probe.width, snapshot->probe.height);
-    } else {
-        json_append(writer, "null");
-    }
     json_append(writer, ",\"progress\":");
     if (snapshot->has_progress) {
         json_append(writer, "{\"frame\":%llu,\"fps\":",
@@ -191,11 +162,11 @@ static gw_status finish_response(gw_http_response *response, json_writer *writer
                                  gw_error *error)
 {
     if (writer->failed) {
-        set_error(error, GW_ERR_OVERFLOW, "HTTP JSON response exceeds capacity");
+        gw_error_set(error, GW_ERR_OVERFLOW, "HTTP JSON response exceeds capacity");
         return GW_ERR_OVERFLOW;
     }
     response->body_length = writer->length;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -207,7 +178,7 @@ gw_status gw_http_render_channel_metrics(
     bool worker_active;
 
     if (snapshot == NULL || response == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "snapshot and HTTP response are required");
         return GW_ERR_ARGUMENT;
     }
@@ -233,20 +204,9 @@ gw_status gw_http_render_channel_metrics(
     }
     json_append(&writer,
                 ",\"consecutive_failures\":%u,\"total_restarts\":%llu,"
-                "\"input\":{\"status\":",
+                "\"progress\":{\"status\":",
                 snapshot->consecutive_failures,
                 (unsigned long long)snapshot->total_restarts);
-    json_string(&writer, worker_active && snapshot->has_probe ? "available"
-                                                             : "unavailable");
-    json_append(&writer, ",\"codec\":");
-    if (worker_active && snapshot->has_probe) {
-        json_string(&writer, snapshot->probe.codec_name);
-        json_append(&writer, ",\"width\":%d,\"height\":%d",
-                    snapshot->probe.width, snapshot->probe.height);
-    } else {
-        json_append(&writer, "null,\"width\":null,\"height\":null");
-    }
-    json_append(&writer, "},\"progress\":{\"status\":");
     json_string(&writer, worker_active && snapshot->has_progress ? "available"
                                                                 : "unavailable");
     if (worker_active && snapshot->has_progress) {
@@ -365,7 +325,7 @@ gw_status gw_http_render_view_page(gw_http_response *response,
     int result = -1;
 
     if (response == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "HTTP response is required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "HTTP response is required");
         return GW_ERR_ARGUMENT;
     }
     memset(response, 0, sizeof(*response));
@@ -381,17 +341,17 @@ gw_status gw_http_render_view_page(gw_http_response *response,
         }
     }
     if (result > 0) {
-        set_error(error, GW_ERR_OVERFLOW,
+        gw_error_set(error, GW_ERR_OVERFLOW,
                   "diagnostic page exceeds HTTP response capacity");
         return GW_ERR_OVERFLOW;
     }
     if (result < 0) {
-        set_error(error, GW_ERR_IO, "diagnostic page asset is unavailable");
+        gw_error_set(error, GW_ERR_IO, "diagnostic page asset is unavailable");
         return GW_ERR_IO;
     }
     response->status_code = 200;
     response->content_type = GW_HTTP_CONTENT_HTML;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -489,7 +449,7 @@ gw_status gw_http_route(gw_channel_manager *manager,
 
     if (manager == NULL || recording == NULL || method == NULL || target == NULL ||
         response == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "manager, recording, method, target, and response are required");
         return GW_ERR_ARGUMENT;
     }
@@ -862,14 +822,14 @@ gw_status gw_http_server_create(gw_http_server **server_output,
 
     if (server_output == NULL || config == NULL || recording == NULL ||
         manager == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "server output, configuration, recording, and manager are required");
         return GW_ERR_ARGUMENT;
     }
     *server_output = NULL;
     server = calloc(1U, sizeof(*server));
     if (server == NULL) {
-        set_error(error, GW_ERR_NO_MEMORY, "cannot allocate HTTP server");
+        gw_error_set(error, GW_ERR_NO_MEMORY, "cannot allocate HTTP server");
         return GW_ERR_NO_MEMORY;
     }
     server->config = *config;
@@ -878,7 +838,7 @@ gw_status gw_http_server_create(gw_http_server **server_output,
     server->listen_fd = -1;
     atomic_init(&server->stop_requested, false);
     *server_output = server;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -897,7 +857,7 @@ static gw_status bind_listener(gw_http_server *server, gw_error *error)
     snprintf(port, sizeof(port), "%u", (unsigned int)server->config.port);
     result = getaddrinfo(server->config.listen, port, &hints, &addresses);
     if (result != 0) {
-        set_error(error, GW_ERR_VALIDATION, "cannot resolve server.listen '%s': %s",
+        gw_error_set(error, GW_ERR_VALIDATION, "cannot resolve server.listen '%s': %s",
                   server->config.listen, gai_strerror(result));
         return GW_ERR_VALIDATION;
     }
@@ -921,7 +881,7 @@ static gw_status bind_listener(gw_http_server *server, gw_error *error)
     }
     freeaddrinfo(addresses);
     if (server->listen_fd < 0) {
-        set_error(error, GW_ERR_IO, "cannot bind HTTP server on %s:%u: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot bind HTTP server on %s:%u: %s",
                   server->config.listen, (unsigned int)server->config.port,
                   strerror(errno));
         return GW_ERR_IO;
@@ -935,7 +895,7 @@ static gw_status discover_bound_port(gw_http_server *server, gw_error *error)
     socklen_t length = sizeof(address);
 
     if (getsockname(server->listen_fd, (struct sockaddr *)&address, &length) < 0) {
-        set_error(error, GW_ERR_IO, "cannot read HTTP listener address: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot read HTTP listener address: %s",
                   strerror(errno));
         return GW_ERR_IO;
     }
@@ -944,7 +904,7 @@ static gw_status discover_bound_port(gw_http_server *server, gw_error *error)
     } else if (address.ss_family == AF_INET6) {
         server->bound_port = ntohs(((struct sockaddr_in6 *)&address)->sin6_port);
     } else {
-        set_error(error, GW_ERR_IO, "HTTP listener has an unsupported address family");
+        gw_error_set(error, GW_ERR_IO, "HTTP listener has an unsupported address family");
         return GW_ERR_IO;
     }
     return GW_OK;
@@ -956,11 +916,11 @@ gw_status gw_http_server_start(gw_http_server *server, gw_error *error)
     int result;
 
     if (server == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "HTTP server is required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "HTTP server is required");
         return GW_ERR_ARGUMENT;
     }
     if (server->thread_started || server->listen_fd >= 0) {
-        set_error(error, GW_ERR_VALIDATION, "HTTP server is already started");
+        gw_error_set(error, GW_ERR_VALIDATION, "HTTP server is already started");
         return GW_ERR_VALIDATION;
     }
     status = bind_listener(server, error);
@@ -978,12 +938,12 @@ gw_status gw_http_server_start(gw_http_server *server, gw_error *error)
     if (result != 0) {
         close(server->listen_fd);
         server->listen_fd = -1;
-        set_error(error, GW_ERR_IO, "cannot start HTTP server thread: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot start HTTP server thread: %s",
                   strerror(result));
         return GW_ERR_IO;
     }
     server->thread_started = true;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 

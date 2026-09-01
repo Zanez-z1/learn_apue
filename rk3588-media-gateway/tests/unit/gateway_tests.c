@@ -75,9 +75,6 @@ static void test_validation(void)
     config.channel_count = 1U;
     make_channel(&config.channels[0]);
     CHECK(gw_config_validate(&config, &error) == GW_OK);
-    config.defaults.probe_timeout_sec = 0;
-    CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
-    config.defaults.probe_timeout_sec = 10;
     config.defaults.stable_run_sec = 0;
     CHECK(gw_config_validate(&config, &error) == GW_ERR_VALIDATION);
     config.defaults.stable_run_sec = 60;
@@ -121,7 +118,6 @@ static void test_config_loader(void)
     CHECK(gw_config_load_file(path, &config, &error) == GW_OK);
     CHECK(config.channel_count == 1U);
     CHECK(config.server.enabled);
-    CHECK(config.defaults.probe_timeout_sec == 10);
     CHECK(config.defaults.stable_run_sec == 60);
     CHECK(config.mediamtx.recording.enabled);
     CHECK(config.mediamtx.recording.segment_duration_sec == 3600);
@@ -137,7 +133,6 @@ static void test_pipeline(void)
     gw_mediamtx_config mediamtx;
     gw_pipeline_argv arguments;
     gw_error error = {0};
-    char command[8192];
 
     make_channel(&channel);
     snprintf(mediamtx.publish_base_url, sizeof(mediamtx.publish_base_url), "%s",
@@ -145,15 +140,13 @@ static void test_pipeline(void)
     CHECK(gw_pipeline_build(&channel, &mediamtx, "ffmpeg", &arguments, &error) ==
           GW_OK);
     CHECK(arguments.items[arguments.count] == NULL);
-    CHECK(gw_pipeline_render_redacted(&arguments, command, sizeof(command), &error) ==
-          GW_OK);
-    CHECK(strstr(command, "scale_rkrga=w=1280:h=720:format=nv12") != NULL);
-    CHECK(strstr(command, "'-r' '25' '-g' '50'") != NULL);
-    CHECK(strstr(command, "'-f' 'rtsp' '-rtsp_transport' 'tcp' "
-                          "'rtsp://127.0.0.1:8554/cam01'") != NULL);
-    CHECK(strstr(command, "rtsp://alice:***@camera.local/live") != NULL);
-    CHECK(strstr(command, "secret") == NULL);
-    CHECK(strstr(command, "rtsp://127.0.0.1:8554/cam01") != NULL);
+    CHECK(arguments.count == 35U);
+    CHECK(strcmp(arguments.items[18], "rtsp://alice:secret@camera.local/live") == 0);
+    CHECK(strcmp(arguments.items[20],
+                 "scale_rkrga=w=1280:h=720:format=nv12") == 0);
+    CHECK(strcmp(arguments.items[24], "4000k") == 0);
+    CHECK(strcmp(arguments.items[28], "50") == 0);
+    CHECK(strcmp(arguments.items[34], "rtsp://127.0.0.1:8554/cam01") == 0);
     gw_pipeline_argv_free(&arguments);
 }
 

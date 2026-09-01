@@ -78,22 +78,10 @@ void gw_channel_snapshot_clear_live_data(gw_channel_snapshot *snapshot)
     if (snapshot == NULL) {
         return;
     }
-    snapshot->has_probe = false;
-    memset(&snapshot->probe, 0, sizeof(snapshot->probe));
     snapshot->has_progress = false;
     memset(&snapshot->progress, 0, sizeof(snapshot->progress));
     memset(&snapshot->worker_metrics, 0, sizeof(snapshot->worker_metrics));
     snapshot->worker_metrics.pid = (pid_t)-1;
-}
-
-void gw_channel_snapshot_set_probe(gw_channel_snapshot *snapshot,
-                                   const gw_probe_info *probe)
-{
-    if (snapshot == NULL || probe == NULL) {
-        return;
-    }
-    snapshot->probe = *probe;
-    snapshot->has_probe = true;
 }
 
 void gw_channel_snapshot_set_progress(gw_channel_snapshot *snapshot,
@@ -113,8 +101,6 @@ const char *gw_channel_process_kind_string(gw_channel_process_kind kind)
     switch (kind) {
     case GW_CHANNEL_PROCESS_NONE:
         return "NONE";
-    case GW_CHANNEL_PROCESS_PROBE:
-        return "PROBE";
     case GW_CHANNEL_PROCESS_WORKER:
         return "WORKER";
     }

@@ -1,14 +1,13 @@
 /* POSIX worker creation, nonblocking output capture, termination, and reaping. */
 #define _POSIX_C_SOURCE 200809L
 
+#include "gateway/error.h"
 #include "gateway/process_manager.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
-#include <stdarg.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -16,27 +15,7 @@
 
 extern char **environ;
 
-static void set_error(gw_error *error, gw_status code, const char *format, ...)
-{
-    va_list arguments;
-
-    if (error == NULL) {
-        return;
-    }
-    error->code = code;
-    va_start(arguments, format);
-    vsnprintf(error->message, sizeof(error->message), format, arguments);
-    va_end(arguments);
-}
-
-static void clear_error(gw_error *error)
-{
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
-}
-
+/* Close an owned descriptor and mark it invalid. */
 static void close_fd(int *descriptor)
 {
     if (*descriptor >= 0) {
@@ -45,6 +24,7 @@ static void close_fd(int *descriptor)
     }
 }
 
+/* Protect pipe endpoints from exec leaks and make the read end nonblocking. */
 static gw_status configure_pipe(int descriptors[2], gw_error *error)
 {
     int flags;
@@ -54,7 +34,7 @@ static gw_status configure_pipe(int descriptors[2], gw_error *error)
     for (index = 0; index < 2; ++index) {
         flags = fcntl(descriptors[index], F_GETFD);
         if (flags < 0 || fcntl(descriptors[index], F_SETFD, flags | FD_CLOEXEC) < 0) {
-            set_error(error, GW_ERR_IO, "cannot configure close-on-exec: %s",
+            gw_error_set(error, GW_ERR_IO, "cannot configure close-on-exec: %s",
                       strerror(errno));
             return GW_ERR_IO;
         }
@@ -62,7 +42,7 @@ static gw_status configure_pipe(int descriptors[2], gw_error *error)
     /* Only the parent read end is nonblocking; the worker keeps normal writes. */
     flags = fcntl(descriptors[0], F_GETFL);
     if (flags < 0 || fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) < 0) {
-        set_error(error, GW_ERR_IO, "cannot make worker pipe nonblocking: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot make worker pipe nonblocking: %s",
                   strerror(errno));
         return GW_ERR_IO;
     }
@@ -80,6 +60,7 @@ void gw_process_init(gw_process *process)
     process->stderr_fd = -1;
 }
 
+/* Queue the child-side stdout/stderr redirection and close operations. */
 static int add_file_actions(posix_spawn_file_actions_t *actions,
                             int stdout_pipe[2], int stderr_pipe[2])
 {
@@ -125,17 +106,19 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
     int result;
     gw_status status;
 
+    /* Check that a command was provided and this process is not already running. */
     if (process == NULL || arguments == NULL || arguments[0] == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "worker arguments are required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "worker arguments are required");
         return GW_ERR_ARGUMENT;
     }
     if (process->running || process->pid > 0) {
-        set_error(error, GW_ERR_VALIDATION, "worker process is already active");
+        gw_error_set(error, GW_ERR_VALIDATION, "worker process is already active");
         return GW_ERR_VALIDATION;
     }
 
+    /* Create two pipes so gatewayd can read the worker's output and error logs. */
     if (pipe(stdout_pipe) < 0) {
-        set_error(error, GW_ERR_IO, "cannot create stdout pipe: %s", strerror(errno));
+        gw_error_set(error, GW_ERR_IO, "cannot create stdout pipe: %s", strerror(errno));
         return GW_ERR_IO;
     }
     status = configure_pipe(stdout_pipe, error);
@@ -143,7 +126,7 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
         goto fail;
     }
     if (pipe(stderr_pipe) < 0) {
-        set_error(error, GW_ERR_IO, "cannot create stderr pipe: %s", strerror(errno));
+        gw_error_set(error, GW_ERR_IO, "cannot create stderr pipe: %s", strerror(errno));
         goto fail;
     }
     status = configure_pipe(stderr_pipe, error);
@@ -151,33 +134,37 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
         goto fail;
     }
 
+    /* Make the worker write stdout and stderr into the two pipes. */
     result = posix_spawn_file_actions_init(&actions);
     if (result != 0) {
-        set_error(error, GW_ERR_IO, "cannot initialize spawn file actions: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot initialize spawn file actions: %s",
                   strerror(result));
         goto fail;
     }
     actions_initialized = true;
     result = add_file_actions(&actions, stdout_pipe, stderr_pipe);
     if (result != 0) {
-        set_error(error, GW_ERR_IO, "cannot configure worker file actions: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot configure worker file actions: %s",
                   strerror(result));
         goto fail;
     }
 
+    /* Put the worker in its own group and let it receive signals normally. */
     result = posix_spawnattr_init(&attributes);
     if (result != 0) {
-        set_error(error, GW_ERR_IO, "cannot initialize spawn attributes: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot initialize spawn attributes: %s",
                   strerror(result));
         goto fail;
     }
     attributes_initialized = true;
-    /* A dedicated process group lets stop/kill include any FFmpeg descendants. */
+
+    /* Restore normal handling of the signals blocked by gatewayd. */
     sigemptyset(&default_signals);
     sigaddset(&default_signals, SIGINT);
     sigaddset(&default_signals, SIGTERM);
     sigaddset(&default_signals, SIGHUP);
     sigemptyset(&empty_mask);
+    /* Apply the process-group and signal settings, stopping on the first error. */
     result = posix_spawnattr_setflags(&attributes, flags);
     if (result == 0) {
         result = posix_spawnattr_setpgroup(&attributes, 0);
@@ -189,20 +176,21 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
         result = posix_spawnattr_setsigmask(&attributes, &empty_mask);
     }
     if (result != 0) {
-        set_error(error, GW_ERR_IO, "cannot configure worker spawn attributes: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot configure worker spawn attributes: %s",
                   strerror(result));
         goto fail;
     }
 
-    /* Execute argv directly; no shell parses configuration-derived arguments. */
+    /* Start the worker directly without passing its arguments through a shell. */
     result = posix_spawnp(&child_pid, arguments[0], &actions, &attributes, arguments,
                           environ);
     if (result != 0) {
-        set_error(error, GW_ERR_IO, "cannot start worker '%s': %s", arguments[0],
+        gw_error_set(error, GW_ERR_IO, "cannot start worker '%s': %s", arguments[0],
                   strerror(result));
         goto fail;
     }
 
+    /* After startup, gatewayd keeps only the two pipe read ends. */
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     close_fd(&stdout_pipe[1]);
@@ -214,28 +202,21 @@ gw_status gw_process_start(gw_process *process, char *const arguments[],
     process->running = true;
     process->reaped = false;
     process->wait_status = 0;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 
 fail:
+    /* If startup fails, release everything created before the failure. */
     if (attributes_initialized) {
         posix_spawnattr_destroy(&attributes);
     }
     if (actions_initialized) {
         posix_spawn_file_actions_destroy(&actions);
     }
-    if (stdout_pipe[0] >= 0) {
-        close(stdout_pipe[0]);
-    }
-    if (stdout_pipe[1] >= 0) {
-        close(stdout_pipe[1]);
-    }
-    if (stderr_pipe[0] >= 0) {
-        close(stderr_pipe[0]);
-    }
-    if (stderr_pipe[1] >= 0) {
-        close(stderr_pipe[1]);
-    }
+    close_fd(&stdout_pipe[0]);
+    close_fd(&stdout_pipe[1]);
+    close_fd(&stderr_pipe[0]);
+    close_fd(&stderr_pipe[1]);
     return GW_ERR_IO;
 }
 
@@ -248,7 +229,7 @@ gw_status gw_process_read(gw_process *process, gw_process_stream stream,
 
     if (process == NULL || buffer == NULL || capacity == 0U || bytes_read == NULL ||
         end_of_stream == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "invalid worker read arguments");
+        gw_error_set(error, GW_ERR_ARGUMENT, "invalid worker read arguments");
         return GW_ERR_ARGUMENT;
     }
     if (stream == GW_PROCESS_STDOUT) {
@@ -256,35 +237,36 @@ gw_status gw_process_read(gw_process *process, gw_process_stream stream,
     } else if (stream == GW_PROCESS_STDERR) {
         descriptor = &process->stderr_fd;
     } else {
-        set_error(error, GW_ERR_ARGUMENT, "invalid worker stream");
+        gw_error_set(error, GW_ERR_ARGUMENT, "invalid worker stream");
         return GW_ERR_ARGUMENT;
     }
 
-    *bytes_read = 0U;
+    *bytes_read = 0;
     *end_of_stream = false;
+    //if descriptor == -1
     if (*descriptor < 0) {
         *end_of_stream = true;
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
 
     result = read(*descriptor, buffer, capacity);
     if (result > 0) {
-        *bytes_read = (size_t)result;
-        clear_error(error);
+        *bytes_read = result;
+        gw_error_clear(error);
         return GW_OK;
     }
     if (result == 0) {
         close_fd(descriptor);
         *end_of_stream = true;
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
     if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
-    set_error(error, GW_ERR_IO, "cannot read worker stream: %s", strerror(errno));
+    gw_error_set(error, GW_ERR_IO, "cannot read worker stream: %s", strerror(errno));
     return GW_ERR_IO;
 }
 
@@ -293,16 +275,16 @@ gw_status gw_process_poll_exit(gw_process *process, bool *exited, gw_error *erro
     pid_t result;
 
     if (process == NULL || exited == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "worker and exit result are required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "worker and exit result are required");
         return GW_ERR_ARGUMENT;
     }
     if (process->reaped) {
         *exited = true;
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
     if (process->pid <= 0) {
-        set_error(error, GW_ERR_VALIDATION, "worker process has not been started");
+        gw_error_set(error, GW_ERR_VALIDATION, "worker process has not been started");
         return GW_ERR_VALIDATION;
     }
 
@@ -310,22 +292,22 @@ gw_status gw_process_poll_exit(gw_process *process, bool *exited, gw_error *erro
     result = waitpid(process->pid, &process->wait_status, WNOHANG);
     if (result == 0) {
         *exited = false;
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
     if (result == process->pid) {
         process->running = false;
         process->reaped = true;
         *exited = true;
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
     if (result < 0 && errno == EINTR) {
         *exited = false;
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
-    set_error(error, GW_ERR_IO, "cannot inspect worker process: %s", strerror(errno));
+    gw_error_set(error, GW_ERR_IO, "cannot inspect worker process: %s", strerror(errno));
     return GW_ERR_IO;
 }
 
@@ -356,6 +338,7 @@ static struct timespec make_deadline(int timeout_ms)
     return deadline;
 }
 
+/* After SIGKILL is sent, wait for the worker and remove its zombie entry. */
 static gw_status wait_after_kill(gw_process *process, gw_error *error)
 {
     pid_t result;
@@ -363,8 +346,9 @@ static gw_status wait_after_kill(gw_process *process, gw_error *error)
     do {
         result = waitpid(process->pid, &process->wait_status, 0);
     } while (result < 0 && errno == EINTR);
+
     if (result != process->pid) {
-        set_error(error, GW_ERR_IO, "cannot reap worker process: %s", strerror(errno));
+        gw_error_set(error, GW_ERR_IO, "cannot reap worker process: %s", strerror(errno));
         return GW_ERR_IO;
     }
     process->running = false;
@@ -380,46 +364,52 @@ gw_status gw_process_stop(gw_process *process, int timeout_ms, gw_error *error)
     gw_status status;
 
     if (process == NULL || timeout_ms < 0) {
-        set_error(error, GW_ERR_ARGUMENT, "worker and non-negative timeout are required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "worker and non-negative timeout are required");
         return GW_ERR_ARGUMENT;
     }
     if (process->reaped) {
-        clear_error(error);
+        gw_error_clear(error);
         return GW_OK;
     }
     if (process->pid <= 0) {
-        set_error(error, GW_ERR_VALIDATION, "worker process has not been started");
+        gw_error_set(error, GW_ERR_VALIDATION, "worker process has not been started");
         return GW_ERR_VALIDATION;
     }
 
     /* Negative PID targets the worker's entire process group. */
     if (kill(-process->pid, SIGTERM) < 0 && errno != ESRCH) {
-        set_error(error, GW_ERR_IO, "cannot terminate worker process group: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot terminate worker process group: %s",
                   strerror(errno));
         return GW_ERR_IO;
     }
     deadline = make_deadline(timeout_ms);
     while (!deadline_reached(&deadline)) {
         status = gw_process_poll_exit(process, &exited, error);
-        if (status != GW_OK || exited) {
+        if (status != GW_OK) {
             return status;
+        }
+        if (exited) {
+            return GW_OK;
         }
         nanosleep(&pause_time, NULL);
     }
 
     status = gw_process_poll_exit(process, &exited, error);
-    if (status != GW_OK || exited) {
+    if (status != GW_OK) {
         return status;
+    }
+    if (exited) {
+        return GW_OK;
     }
     /* Escalate only after the graceful deadline expires. */
     if (kill(-process->pid, SIGKILL) < 0 && errno != ESRCH) {
-        set_error(error, GW_ERR_IO, "cannot kill worker process group: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot kill worker process group: %s",
                   strerror(errno));
         return GW_ERR_IO;
     }
     status = wait_after_kill(process, error);
     if (status == GW_OK) {
-        clear_error(error);
+        gw_error_clear(error);
     }
     return status;
 }
@@ -441,16 +431,16 @@ int gw_process_exit_code(const gw_process *process)
 gw_status gw_process_close(gw_process *process, gw_error *error)
 {
     if (process == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "worker process is required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "worker process is required");
         return GW_ERR_ARGUMENT;
     }
     if (process->running) {
-        set_error(error, GW_ERR_VALIDATION, "cannot close a running worker process");
+        gw_error_set(error, GW_ERR_VALIDATION, "cannot close a running worker process");
         return GW_ERR_VALIDATION;
     }
     close_fd(&process->stdout_fd);
     close_fd(&process->stderr_fd);
     process->pid = -1;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }

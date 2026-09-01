@@ -19,6 +19,7 @@ add_library(gateway_core
     src/api/http_server.c
     src/channel/channel_manager.c
     src/channel/channel_snapshot.c
+    src/common/error.c
     src/monitor/process_metrics.c
     src/channel/channel_state.c
     src/channel/supervisor.c
@@ -28,7 +29,6 @@ add_library(gateway_core
     src/monitor/progress_parser.c
     src/monitor/recording_status.c
     src/process/process_manager.c
-    src/probe/probe.c
 )
 
 target_include_directories(gateway_core PUBLIC include)
@@ -63,7 +63,8 @@ install(FILES deploy/systemd/rk-media-gateway.tmpfiles.conf
         RENAME rk-media-gateway.conf)
 install(FILES deploy/systemd/gateway.env.example
         DESTINATION share/rk-media-gateway)
-install(FILES docs/deployment.md docs/demo.md
+install(FILES docs/deployment.md docs/user-manual.md
+        docs/interview-guide.md
         DESTINATION share/doc/rk-media-gateway)
 install(PROGRAMS scripts/check_media_env.sh scripts/run_pc_camera_source.sh
         scripts/run_transcode_benchmark.sh
@@ -106,13 +107,6 @@ if(GATEWAY_BUILD_TESTS)
     add_test(NAME gateway_channel_snapshot_tests
         COMMAND gateway_channel_snapshot_tests)
     set_tests_properties(gateway_channel_snapshot_tests PROPERTIES TIMEOUT 5)
-
-    add_executable(gateway_probe_tests tests/unit/probe_tests.c)
-    target_link_libraries(gateway_probe_tests PRIVATE gateway_core)
-    target_compile_options(gateway_probe_tests PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
-    add_test(NAME gateway_probe_tests COMMAND gateway_probe_tests)
-    set_tests_properties(gateway_probe_tests PROPERTIES TIMEOUT 5)
 
     add_executable(gateway_http_server_tests tests/unit/http_server_tests.c)
     target_link_libraries(gateway_http_server_tests PRIVATE gateway_core)
@@ -273,7 +267,6 @@ if(GATEWAY_BUILD_TESTS)
         COMMAND gatewayd
             --config ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
             --exit-when-idle
-            --ffprobe-binary $<TARGET_FILE:gateway_process_fixture>
             --ffmpeg-binary $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_single_channel_test PROPERTIES
         TIMEOUT 5
@@ -292,7 +285,6 @@ if(GATEWAY_BUILD_TESTS)
         COMMAND gatewayd
             --config ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
             --exit-when-idle
-            --ffprobe-binary $<TARGET_FILE:gateway_process_fixture>
             --ffmpeg-binary $<TARGET_FILE:gateway_process_fixture>)
     set_tests_properties(gateway_stable_run_test PROPERTIES
         TIMEOUT 5
@@ -336,51 +328,4 @@ if(GATEWAY_BUILD_TESTS)
     set_tests_properties(gateway_retry_exhaustion_test PROPERTIES
         TIMEOUT 5)
 
-    add_test(NAME gateway_probe_failure_test
-        COMMAND ${CMAKE_COMMAND}
-            -DGATEWAY=$<TARGET_FILE:gatewayd>
-            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
-            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
-            -DMODE=success
-            -DPROBE_MODE=fail
-            "-DREQUIRED=state=FAILED event=probe_failure exit_code=6 failures=1 restart_count=0"
-            -DFORBIDDEN=fixture-password
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_failure.cmake)
-    set_tests_properties(gateway_probe_failure_test PROPERTIES TIMEOUT 4)
-
-    add_test(NAME gateway_probe_timeout_test
-        COMMAND ${CMAKE_COMMAND}
-            -DGATEWAY=$<TARGET_FILE:gatewayd>
-            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
-            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
-            -DMODE=success
-            -DPROBE_MODE=timeout
-            "-DREQUIRED=state=FAILED event=probe_timeout exit_code=143 failures=1 restart_count=0"
-            -DFORBIDDEN=fixture-password
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_failure.cmake)
-    set_tests_properties(gateway_probe_timeout_test PROPERTIES TIMEOUT 4)
-
-    add_test(NAME gateway_probe_mismatch_test
-        COMMAND ${CMAKE_COMMAND}
-            -DGATEWAY=$<TARGET_FILE:gatewayd>
-            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
-            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.integration.yaml
-            -DMODE=success
-            -DPROBE_MODE=mismatch
-            "-DREQUIRED=state=FAILED event=probe_mismatch exit_code=0 failures=1 restart_count=0"
-            -DFORBIDDEN=fixture-password
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_failure.cmake)
-    set_tests_properties(gateway_probe_mismatch_test PROPERTIES TIMEOUT 4)
-
-    add_test(NAME gateway_probe_retry_exhaustion_test
-        COMMAND ${CMAKE_COMMAND}
-            -DGATEWAY=$<TARGET_FILE:gatewayd>
-            -DFIXTURE=$<TARGET_FILE:gateway_process_fixture>
-            -DCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/gateway.retry.integration.yaml
-            -DMODE=success
-            -DPROBE_MODE=fail
-            "-DREQUIRED=state=FAILED event=probe_failure exit_code=6 failures=3 restart_count=2"
-            -DFORBIDDEN=fixture-password
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/assert_gateway_failure.cmake)
-    set_tests_properties(gateway_probe_retry_exhaustion_test PROPERTIES TIMEOUT 5)
 endif()

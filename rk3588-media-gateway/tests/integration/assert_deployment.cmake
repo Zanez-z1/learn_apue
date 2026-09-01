@@ -6,7 +6,9 @@ file(READ "${SOURCE_DIR}/deploy/systemd/rk-media-gateway.service" gateway_unit)
 file(READ "${SOURCE_DIR}/deploy/systemd/mediamtx.service" mediamtx_unit)
 file(READ "${SOURCE_DIR}/deploy/systemd/rk-media-gateway.tmpfiles.conf" tmpfiles)
 file(READ "${SOURCE_DIR}/deploy/systemd/gateway.env.example" environment)
-file(READ "${SOURCE_DIR}/docs/demo.md" demo)
+file(READ "${SOURCE_DIR}/README.md" readme)
+file(READ "${SOURCE_DIR}/docs/user-manual.md" user_manual)
+set(project_guides "${readme}\n${user_manual}")
 file(READ "${SOURCE_DIR}/web/diagnostic.html" diagnostic_page)
 file(READ "${SOURCE_DIR}/config/mediamtx.pc-source.yml" pc_source_config)
 file(READ "${SOURCE_DIR}/scripts/run_pc_camera_source.sh" pc_source_runner)
@@ -42,11 +44,10 @@ foreach(required IN ITEMS
         "/v1/channels/cam01/metrics"
         "/view/cam01"
         "/v1/recording"
-        "rtsp://127.0.0.1:8554/cam01"
         "不包含音频")
-    string(FIND "${demo}" "${required}" position)
+    string(FIND "${project_guides}" "${required}" position)
     if(position EQUAL -1)
-        message(FATAL_ERROR "demo guide is missing '${required}'")
+        message(FATAL_ERROR "project guides are missing '${required}'")
     endif()
 endforeach()
 

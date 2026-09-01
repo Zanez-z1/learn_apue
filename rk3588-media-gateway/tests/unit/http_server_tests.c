@@ -208,11 +208,6 @@ static void test_static_page_and_json_escaping(void)
     snapshot.state = GW_CHANNEL_RUNNING;
     snapshot.process_kind = GW_CHANNEL_PROCESS_WORKER;
     snapshot.process_pid = (pid_t)123;
-    snapshot.has_probe = true;
-    snprintf(snapshot.probe.codec_name, sizeof(snapshot.probe.codec_name), "%s",
-             "h264\"codec");
-    snapshot.probe.width = 1920;
-    snapshot.probe.height = 1080;
     snapshot.has_progress = true;
     snapshot.progress.fps = 25.0;
     snprintf(snapshot.progress.bitrate, sizeof(snapshot.progress.bitrate), "%s",
@@ -225,7 +220,7 @@ static void test_static_page_and_json_escaping(void)
     CHECK(gw_http_render_channel_metrics(&snapshot, &response, &error) == GW_OK);
     CHECK(response.content_type == GW_HTTP_CONTENT_JSON);
     CHECK(strstr(response.body, "\"id\":\"cam\\\"line\\n\"") != NULL);
-    CHECK(strstr(response.body, "\"codec\":\"h264\\\"codec\"") != NULL);
+    CHECK(strstr(response.body, "\"input\"") == NULL);
     CHECK(strstr(response.body, "\"bitrate\":\"4k\\nbit\"") != NULL);
     CHECK(strstr(response.body, "\"cpu_percent\":12.500") != NULL);
     CHECK(strstr(response.body, "unit-password") == NULL);
@@ -236,9 +231,6 @@ static void test_static_page_and_json_escaping(void)
     snapshot.process_pid = (pid_t)-1;
     CHECK(gw_http_render_channel_metrics(&snapshot, &response, &error) == GW_OK);
     CHECK(strstr(response.body, "\"ffmpeg_pid\":null") != NULL);
-    CHECK(strstr(response.body,
-                 "\"input\":{\"status\":\"unavailable\",\"codec\":null") !=
-          NULL);
     CHECK(strstr(response.body,
                  "\"progress\":{\"status\":\"unavailable\",\"fps\":null") !=
           NULL);

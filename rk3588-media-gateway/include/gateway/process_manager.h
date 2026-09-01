@@ -10,7 +10,7 @@
 #include <sys/types.h>
 
 typedef enum {
-    GW_PROCESS_STDOUT = 0,
+    GW_PROCESS_STDOUT = 1,
     GW_PROCESS_STDERR
 } gw_process_stream;
 

@@ -3,6 +3,8 @@
 
 /* Public configuration model and helpers shared by all gateway modules. */
 
+#include "gateway/error.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -14,26 +16,6 @@
 #define GW_PATH_CAP 129U
 #define GW_FILE_PATH_CAP 512U
 #define GW_NAME_CAP 33U
-#define GW_ERROR_CAP 256U
-
-typedef enum {
-    GW_OK = 0,
-    GW_ERR_ARGUMENT,
-    GW_ERR_IO,
-    GW_ERR_PARSE,
-    GW_ERR_VALIDATION,
-    GW_ERR_ENV,
-    GW_ERR_NO_MEMORY,
-    GW_ERR_OVERFLOW,
-    GW_ERR_NOT_FOUND,
-    GW_ERR_CONFLICT
-} gw_status;
-
-/* Optional diagnostic returned alongside a gw_status value. */
-typedef struct {
-    gw_status code;
-    char message[GW_ERROR_CAP];
-} gw_error;
 
 typedef struct {
     bool enabled;
@@ -60,7 +42,6 @@ typedef struct {
 } gw_mediamtx_config;
 
 typedef struct {
-    int probe_timeout_sec;
     int startup_timeout_sec;
     int progress_timeout_sec;
     int stable_run_sec;

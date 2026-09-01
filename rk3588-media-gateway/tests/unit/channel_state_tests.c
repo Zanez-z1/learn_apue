@@ -31,9 +31,6 @@ static void test_happy_path(void)
     CHECK(runtime.state == GW_CHANNEL_STOPPED);
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_START, &policy, &error) ==
           GW_OK);
-    CHECK(runtime.state == GW_CHANNEL_PROBING);
-    CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_PROBE_SUCCEEDED, &policy,
-                                &error) == GW_OK);
     CHECK(runtime.state == GW_CHANNEL_STARTING);
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_PROGRESS, &policy, &error) ==
           GW_OK);
@@ -59,8 +56,6 @@ static void test_backoff_and_exhaustion(void)
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_START, &policy, &error) ==
           GW_OK);
     for (attempt = 0U; attempt < 3U; ++attempt) {
-        CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_PROBE_SUCCEEDED, &policy,
-                                    &error) == GW_OK);
         CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_FAILURE, &policy,
                                     &error) == GW_OK);
         CHECK(runtime.state == GW_CHANNEL_BACKOFF);
@@ -70,8 +65,6 @@ static void test_backoff_and_exhaustion(void)
                                     &policy, &error) == GW_OK);
     }
     CHECK(runtime.total_restarts == 3U);
-    CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_PROBE_SUCCEEDED, &policy,
-                                &error) == GW_OK);
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_FAILURE, &policy, &error) ==
           GW_OK);
     CHECK(runtime.state == GW_CHANNEL_FAILED);
@@ -79,7 +72,7 @@ static void test_backoff_and_exhaustion(void)
     CHECK(runtime.backoff_sec == 3);
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_BACKOFF_ELAPSED,
                                 &policy, &error) == GW_OK);
-    CHECK(runtime.state == GW_CHANNEL_PROBING);
+    CHECK(runtime.state == GW_CHANNEL_STARTING);
     CHECK(runtime.total_restarts == 4U);
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_FAILURE, &policy,
                                 &error) == GW_OK);
@@ -137,7 +130,7 @@ static void test_invalid_transition_and_manual_reset(void)
     CHECK(runtime.state == GW_CHANNEL_FAILED);
     CHECK(gw_channel_transition(&runtime, GW_CHANNEL_EVENT_START, &policy, &error) ==
           GW_OK);
-    CHECK(runtime.state == GW_CHANNEL_PROBING);
+    CHECK(runtime.state == GW_CHANNEL_STARTING);
     CHECK(runtime.consecutive_failures == 0U);
 }
 

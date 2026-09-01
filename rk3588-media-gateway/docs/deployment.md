@@ -1,7 +1,7 @@
 # systemd 部署指南
 
 本文说明如何把已验证的构建安装为长期运行的非 root systemd 服务。全新板卡先完成
-第 1～3 节，再回到 [从零跑通与演示完整视频链路](demo.md) 做前台验证；验证通过后才
+第 1～3 节，再回到[单路摄像头用户手册](user-manual.md)做前台验证；验证通过后才
 执行第 4 节启用服务。已经部署过 MediaMTX 的开发板，可以先按演示文档运行
 `./build/gatewayd`，不需要每次重新安装。
 
@@ -13,7 +13,6 @@
 cmake --version
 pkg-config --modversion yaml-0.1
 command -v ffmpeg
-command -v ffprobe
 command -v mediamtx
 ffmpeg -hide_banner -decoders | grep h264_rkmpp
 ffmpeg -hide_banner -encoders | grep h264_rkmpp

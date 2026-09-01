@@ -1,28 +1,15 @@
 /* YAML-to-gw_config translation, defaulting, expansion, and policy validation. */
 #include "gateway/config.h"
+#include "gateway/error.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <yaml.h>
-
-static void set_error(gw_error *error, gw_status code, const char *format, ...)
-{
-    va_list arguments;
-
-    if (error == NULL) {
-        return;
-    }
-    error->code = code;
-    va_start(arguments, format);
-    vsnprintf(error->message, sizeof(error->message), format, arguments);
-    va_end(arguments);
-}
 
 static gw_status copy_text(char *destination, size_t capacity, const char *source)
 {
@@ -77,21 +64,21 @@ static gw_status read_string(yaml_document_t *document, yaml_node_t *mapping,
 
     if (node == NULL) {
         if (required) {
-            set_error(error, GW_ERR_PARSE, "missing required field %s", key);
+            gw_error_set(error, GW_ERR_PARSE, "missing required field %s", key);
             return GW_ERR_PARSE;
         }
         return GW_OK;
     }
     value = scalar_text(node);
     if (value == NULL) {
-        set_error(error, GW_ERR_PARSE, "%s must be a scalar string", key);
+        gw_error_set(error, GW_ERR_PARSE, "%s must be a scalar string", key);
         return GW_ERR_PARSE;
     }
     status = copy_text(destination, capacity, value);
     if (status == GW_ERR_ARGUMENT) {
-        set_error(error, status, "invalid destination for %s", key);
+        gw_error_set(error, status, "invalid destination for %s", key);
     } else if (status == GW_ERR_OVERFLOW) {
-        set_error(error, status, "%s exceeds %zu bytes", key, capacity - 1U);
+        gw_error_set(error, status, "%s exceeds %zu bytes", key, capacity - 1U);
     }
     return status;
 }
@@ -107,21 +94,21 @@ static gw_status read_int(yaml_document_t *document, yaml_node_t *mapping,
 
     if (node == NULL) {
         if (required) {
-            set_error(error, GW_ERR_PARSE, "missing required field %s", key);
+            gw_error_set(error, GW_ERR_PARSE, "missing required field %s", key);
             return GW_ERR_PARSE;
         }
         return GW_OK;
     }
     value = scalar_text(node);
     if (value == NULL) {
-        set_error(error, GW_ERR_PARSE, "%s must be an integer", key);
+        gw_error_set(error, GW_ERR_PARSE, "%s must be an integer", key);
         return GW_ERR_PARSE;
     }
     errno = 0;
     parsed = strtol(value, &end, 10);
     if (errno != 0 || end == value || *end != '\0' || parsed < INT_MIN ||
         parsed > INT_MAX) {
-        set_error(error, GW_ERR_PARSE, "%s is not a valid integer", key);
+        gw_error_set(error, GW_ERR_PARSE, "%s is not a valid integer", key);
         return GW_ERR_PARSE;
     }
     *destination = (int)parsed;
@@ -139,7 +126,7 @@ static gw_status read_bool(yaml_document_t *document, yaml_node_t *mapping,
     }
     value = scalar_text(node);
     if (value == NULL) {
-        set_error(error, GW_ERR_PARSE, "%s must be true or false", key);
+        gw_error_set(error, GW_ERR_PARSE, "%s must be true or false", key);
         return GW_ERR_PARSE;
     }
     if (strcmp(value, "true") == 0 || strcmp(value, "True") == 0 ||
@@ -152,7 +139,7 @@ static gw_status read_bool(yaml_document_t *document, yaml_node_t *mapping,
         *destination = false;
         return GW_OK;
     }
-    set_error(error, GW_ERR_PARSE, "%s must be true or false", key);
+    gw_error_set(error, GW_ERR_PARSE, "%s must be true or false", key);
     return GW_ERR_PARSE;
 }
 
@@ -184,7 +171,6 @@ void gw_config_init(gw_config *config)
              sizeof(config->mediamtx.recording.playback_listen), "%s",
              "127.0.0.1");
     config->mediamtx.recording.playback_port = 9996U;
-    config->defaults.probe_timeout_sec = 10;
     config->defaults.startup_timeout_sec = 15;
     config->defaults.progress_timeout_sec = 10;
     config->defaults.stable_run_sec = 60;
@@ -220,7 +206,7 @@ static gw_status parse_channel(yaml_document_t *document, yaml_node_t *node,
     gw_status status;
 
     if (node == NULL || node->type != YAML_MAPPING_NODE) {
-        set_error(error, GW_ERR_PARSE, "channels[%zu] must be a mapping", index);
+        gw_error_set(error, GW_ERR_PARSE, "channels[%zu] must be a mapping", index);
         return GW_ERR_PARSE;
     }
     channel_init(channel);
@@ -246,7 +232,7 @@ static gw_status parse_channel(yaml_document_t *document, yaml_node_t *node,
     if (input == NULL || input->type != YAML_MAPPING_NODE || video == NULL ||
         video->type != YAML_MAPPING_NODE || output == NULL ||
         output->type != YAML_MAPPING_NODE) {
-        set_error(error, GW_ERR_PARSE,
+        gw_error_set(error, GW_ERR_PARSE,
                   "channels[%zu] requires input, video, and output mappings", index);
         return GW_ERR_PARSE;
     }
@@ -284,7 +270,7 @@ static gw_status parse_channel(yaml_document_t *document, yaml_node_t *node,
         }
         status = copy_text(channel->input.url, sizeof(channel->input.url), expanded);
         if (status != GW_OK) {
-            set_error(error, status, "cannot store expanded input URL");
+            gw_error_set(error, status, "cannot store expanded input URL");
         }
         return status;
     }
@@ -304,7 +290,7 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
     gw_status status;
 
     if (root == NULL || root->type != YAML_MAPPING_NODE) {
-        set_error(error, GW_ERR_PARSE, "configuration root must be a mapping");
+        gw_error_set(error, GW_ERR_PARSE, "configuration root must be a mapping");
         return GW_ERR_PARSE;
     }
     server = mapping_value(document, root, "server");
@@ -329,7 +315,7 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
             return status;
         }
         if (port < 0 || port > UINT16_MAX) {
-            set_error(error, GW_ERR_VALIDATION, "server.port must be 0..65535");
+            gw_error_set(error, GW_ERR_VALIDATION, "server.port must be 0..65535");
             return GW_ERR_VALIDATION;
         }
         config->server.port = (uint16_t)port;
@@ -344,7 +330,7 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
         recording = mapping_value(document, mediamtx, "recording");
         if (recording != NULL) {
             if (recording->type != YAML_MAPPING_NODE) {
-                set_error(error, GW_ERR_PARSE,
+                gw_error_set(error, GW_ERR_PARSE,
                           "mediamtx.recording must be a mapping");
                 return GW_ERR_PARSE;
             }
@@ -395,7 +381,7 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
                 return status;
             }
             if (port < 1 || port > UINT16_MAX) {
-                set_error(error, GW_ERR_VALIDATION,
+                gw_error_set(error, GW_ERR_VALIDATION,
                           "mediamtx.recording.playback_port must be 1..65535");
                 return GW_ERR_VALIDATION;
             }
@@ -411,7 +397,6 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
                 return status;                                                      \
             }                                                                       \
         } while (0)
-        READ_DEFAULT("probe_timeout_sec", probe_timeout_sec);
         READ_DEFAULT("startup_timeout_sec", startup_timeout_sec);
         READ_DEFAULT("progress_timeout_sec", progress_timeout_sec);
         READ_DEFAULT("stable_run_sec", stable_run_sec);
@@ -421,14 +406,14 @@ static gw_status parse_document(yaml_document_t *document, gw_config *config,
 #undef READ_DEFAULT
     }
     if (channels == NULL || channels->type != YAML_SEQUENCE_NODE) {
-        set_error(error, GW_ERR_PARSE, "channels must be a sequence");
+        gw_error_set(error, GW_ERR_PARSE, "channels must be a sequence");
         return GW_ERR_PARSE;
     }
     for (item = channels->data.sequence.items.start;
          item < channels->data.sequence.items.top; ++item) {
         yaml_node_t *channel_node;
         if (config->channel_count >= GW_MAX_CHANNELS) {
-            set_error(error, GW_ERR_VALIDATION, "channels exceeds limit of %u",
+            gw_error_set(error, GW_ERR_VALIDATION, "channels exceeds limit of %u",
                       (unsigned int)GW_MAX_CHANNELS);
             return GW_ERR_VALIDATION;
         }
@@ -452,29 +437,26 @@ gw_status gw_config_load_file(const char *path, gw_config *config, gw_error *err
     gw_status status;
 
     if (path == NULL || config == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "configuration path and output are required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "configuration path and output are required");
         return GW_ERR_ARGUMENT;
     }
 
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
+    gw_error_clear(error);
 
     file = fopen(path, "rb");
     if (file == NULL) {
-        set_error(error, GW_ERR_IO, "cannot open configuration '%s': %s", path,
+        gw_error_set(error, GW_ERR_IO, "cannot open configuration '%s': %s", path,
                   strerror(errno));
         return GW_ERR_IO;
     }
     if (yaml_parser_initialize(&parser) == 0) {
         fclose(file);
-        set_error(error, GW_ERR_NO_MEMORY, "cannot initialize YAML parser");
+        gw_error_set(error, GW_ERR_NO_MEMORY, "cannot initialize YAML parser");
         return GW_ERR_NO_MEMORY;
     }
     yaml_parser_set_input_file(&parser, file);
     if (yaml_parser_load(&parser, &document) == 0) {
-        set_error(error, GW_ERR_PARSE, "YAML parse error at line %zu: %s",
+        gw_error_set(error, GW_ERR_PARSE, "YAML parse error at line %zu: %s",
                   parser.problem_mark.line + 1U,
                   parser.problem != NULL ? parser.problem : "unknown error");
         yaml_parser_delete(&parser);
@@ -537,7 +519,7 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
     size_t previous;
 
     if (config == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "configuration is required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "configuration is required");
         return GW_ERR_ARGUMENT;
     }
     {
@@ -546,24 +528,24 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
 
         if (inet_pton(AF_INET, config->server.listen, &ipv4) != 1 &&
             inet_pton(AF_INET6, config->server.listen, &ipv6) != 1) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "server.listen must be a numeric IPv4 or IPv6 address");
             return GW_ERR_VALIDATION;
         }
     }
     if (strncmp(config->mediamtx.publish_base_url, "rtsp://", 7U) != 0) {
-        set_error(error, GW_ERR_VALIDATION,
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "mediamtx.publish_base_url must use rtsp://");
         return GW_ERR_VALIDATION;
     }
     if (!valid_absolute_directory(config->mediamtx.recording.directory)) {
-        set_error(error, GW_ERR_VALIDATION,
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "mediamtx.recording.directory must be a safe absolute path");
         return GW_ERR_VALIDATION;
     }
     if (strcmp(config->mediamtx.recording.format, "fmp4") != 0 &&
         strcmp(config->mediamtx.recording.format, "mpegts") != 0) {
-        set_error(error, GW_ERR_VALIDATION,
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "mediamtx.recording.format must be fmp4 or mpegts");
         return GW_ERR_VALIDATION;
     }
@@ -575,7 +557,7 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
         config->mediamtx.recording.segment_duration_sec > 86400 ||
         config->mediamtx.recording.delete_after_sec < 0 ||
         config->mediamtx.recording.min_free_mb < 0) {
-        set_error(error, GW_ERR_VALIDATION,
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "MediaMTX recording limits are out of range");
         return GW_ERR_VALIDATION;
     }
@@ -587,18 +569,17 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
                       &ipv4) != 1 &&
             inet_pton(AF_INET6, config->mediamtx.recording.playback_listen,
                       &ipv6) != 1) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "mediamtx.recording.playback_listen must be a numeric address");
             return GW_ERR_VALIDATION;
         }
     }
-    if (config->defaults.probe_timeout_sec <= 0 ||
-        config->defaults.startup_timeout_sec <= 0 ||
+    if (config->defaults.startup_timeout_sec <= 0 ||
         config->defaults.progress_timeout_sec <= 0 ||
         config->defaults.stable_run_sec <= 0 ||
         config->defaults.stop_timeout_sec <= 0 || config->defaults.max_retries < 0 ||
         config->defaults.max_backoff_sec <= 0) {
-        set_error(error, GW_ERR_VALIDATION,
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "timeouts/backoff must be positive and max_retries non-negative");
         return GW_ERR_VALIDATION;
     }
@@ -606,20 +587,20 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
     for (index = 0U; index < config->channel_count; ++index) {
         const gw_channel_config *channel = &config->channels[index];
         if (!valid_identifier(channel->id)) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "channels[%zu].id may contain only letters, digits, '_' and '-'",
                       index);
             return GW_ERR_VALIDATION;
         }
         for (previous = 0U; previous < index; ++previous) {
             if (strcmp(config->channels[previous].id, channel->id) == 0) {
-                set_error(error, GW_ERR_VALIDATION, "duplicate channel id '%s'",
+                gw_error_set(error, GW_ERR_VALIDATION, "duplicate channel id '%s'",
                           channel->id);
                 return GW_ERR_VALIDATION;
             }
             if (strcmp(config->channels[previous].output.path,
                        channel->output.path) == 0) {
-                set_error(error, GW_ERR_VALIDATION,
+                gw_error_set(error, GW_ERR_VALIDATION,
                           "duplicate MediaMTX output path '%s'",
                           channel->output.path);
                 return GW_ERR_VALIDATION;
@@ -627,19 +608,19 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
         }
         if (strcmp(channel->input.type, "rtsp") != 0 ||
             strncmp(channel->input.url, "rtsp://", 7U) != 0) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "channel '%s' phase-1 input must be an rtsp:// URL", channel->id);
             return GW_ERR_VALIDATION;
         }
         if (strcmp(channel->input.transport, "tcp") != 0 &&
             strcmp(channel->input.transport, "udp") != 0) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "channel '%s' transport must be tcp or udp", channel->id);
             return GW_ERR_VALIDATION;
         }
         if (!supported_codec(channel->video.decoder) ||
             !supported_codec(channel->video.encoder)) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "channel '%s' requires h264_rkmpp or hevc_rkmpp codecs",
                       channel->id);
             return GW_ERR_VALIDATION;
@@ -649,21 +630,18 @@ gw_status gw_config_validate(const gw_config *config, gw_error *error)
             channel->video.bitrate_kbps < 64 ||
             channel->video.bitrate_kbps > 100000 || channel->video.fps < 1 ||
             channel->video.fps > 240) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "channel '%s' video dimensions, bitrate, or fps are out of range",
                       channel->id);
             return GW_ERR_VALIDATION;
         }
         if (!valid_identifier(channel->output.path)) {
-            set_error(error, GW_ERR_VALIDATION,
+            gw_error_set(error, GW_ERR_VALIDATION,
                       "channel '%s' output.path must be a safe path segment", channel->id);
             return GW_ERR_VALIDATION;
         }
     }
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -674,7 +652,7 @@ gw_status gw_expand_environment(const char *input, char *output, size_t output_s
     size_t target = 0U;
 
     if (input == NULL || output == NULL || output_size == 0U) {
-        set_error(error, GW_ERR_ARGUMENT, "invalid environment expansion arguments");
+        gw_error_set(error, GW_ERR_ARGUMENT, "invalid environment expansion arguments");
         return GW_ERR_ARGUMENT;
     }
     while (input[source] != '\0') {
@@ -690,7 +668,7 @@ gw_status gw_expand_environment(const char *input, char *output, size_t output_s
             }
             if (input[name_end] != '}' || name_end == name_start ||
                 name_end - name_start >= sizeof(name)) {
-                set_error(error, GW_ERR_ENV, "invalid environment reference in '%s'",
+                gw_error_set(error, GW_ERR_ENV, "invalid environment reference in '%s'",
                           input);
                 return GW_ERR_ENV;
             }
@@ -698,13 +676,13 @@ gw_status gw_expand_environment(const char *input, char *output, size_t output_s
             name[name_end - name_start] = '\0';
             value = getenv(name);
             if (value == NULL) {
-                set_error(error, GW_ERR_ENV,
+                gw_error_set(error, GW_ERR_ENV,
                           "required environment variable '%s' is not set", name);
                 return GW_ERR_ENV;
             }
             value_length = strlen(value);
             if (target + value_length >= output_size) {
-                set_error(error, GW_ERR_OVERFLOW, "expanded value exceeds %zu bytes",
+                gw_error_set(error, GW_ERR_OVERFLOW, "expanded value exceeds %zu bytes",
                           output_size - 1U);
                 return GW_ERR_OVERFLOW;
             }
@@ -713,7 +691,7 @@ gw_status gw_expand_environment(const char *input, char *output, size_t output_s
             source = name_end + 1U;
         } else {
             if (target + 1U >= output_size) {
-                set_error(error, GW_ERR_OVERFLOW, "expanded value exceeds %zu bytes",
+                gw_error_set(error, GW_ERR_OVERFLOW, "expanded value exceeds %zu bytes",
                           output_size - 1U);
                 return GW_ERR_OVERFLOW;
             }

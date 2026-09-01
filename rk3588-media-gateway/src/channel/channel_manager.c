@@ -2,22 +2,20 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "gateway/channel_manager.h"
+#include "gateway/error.h"
 #include "gateway/process_metrics.h"
 
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdatomic.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-typedef struct gw_channel_entry gw_channel_entry;
 
-struct gw_channel_entry {
+typedef struct {
     struct gw_channel_manager *manager;
     bool occupied;
     pthread_t thread;
@@ -32,7 +30,7 @@ struct gw_channel_entry {
     gw_process_metrics_tracker metrics_tracker;
     gw_process_metrics_snapshot worker_metrics;
     uint64_t metrics_generation;
-};
+}gw_channel_entry; 
 
 struct gw_channel_manager {
     gw_config config;
@@ -55,27 +53,6 @@ typedef struct {
     gw_channel_process_kind process_kind;
     pid_t process_pid;
 } gw_metrics_target;
-
-static void set_error(gw_error *error, gw_status code, const char *format, ...)
-{
-    va_list arguments;
-
-    if (error == NULL) {
-        return;
-    }
-    error->code = code;
-    va_start(arguments, format);
-    vsnprintf(error->message, sizeof(error->message), format, arguments);
-    va_end(arguments);
-}
-
-static void clear_error(gw_error *error)
-{
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
-}
 
 static int entry_stop_requested(void *context)
 {
@@ -234,8 +211,7 @@ static void *run_channel(void *context)
 static bool retry_policy_equal(const gw_retry_policy *first,
                                const gw_retry_policy *second)
 {
-    return first->probe_timeout_sec == second->probe_timeout_sec &&
-           first->startup_timeout_sec == second->startup_timeout_sec &&
+    return first->startup_timeout_sec == second->startup_timeout_sec &&
            first->progress_timeout_sec == second->progress_timeout_sec &&
            first->stable_run_sec == second->stable_run_sec &&
            first->stop_timeout_sec == second->stop_timeout_sec &&
@@ -347,7 +323,7 @@ static gw_status start_entry(gw_channel_entry *entry, gw_error *error)
     if (result != 0) {
         atomic_fetch_sub(&entry->manager->active_threads, 1U);
         atomic_store(&entry->thread_running, false);
-        set_error(error, GW_ERR_IO, "cannot start channel '%s': %s",
+        gw_error_set(error, GW_ERR_IO, "cannot start channel '%s': %s",
                   entry->run_config.channels[0].id, strerror(result));
         return GW_ERR_IO;
     }
@@ -375,14 +351,13 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
     size_t enabled_count = 0U;
 
     if (manager_output == NULL || config == NULL || options == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "manager output, configuration, and options are required");
         return GW_ERR_ARGUMENT;
     }
     *manager_output = NULL;
-    if (options->ffprobe_binary == NULL || options->ffprobe_binary[0] == '\0' ||
-        options->ffmpeg_binary == NULL || options->ffmpeg_binary[0] == '\0') {
-        set_error(error, GW_ERR_VALIDATION,
+    if (options->ffmpeg_binary == NULL || options->ffmpeg_binary[0] == '\0') {
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "manager executable names must not be empty");
         return GW_ERR_VALIDATION;
     }
@@ -393,14 +368,14 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
         enabled_count += config->channels[index].enabled ? 1U : 0U;
     }
     if (enabled_count == 0U) {
-        set_error(error, GW_ERR_VALIDATION,
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "at least one enabled channel is required");
         return GW_ERR_VALIDATION;
     }
 
     manager = calloc(1U, sizeof(*manager));
     if (manager == NULL) {
-        set_error(error, GW_ERR_NO_MEMORY, "cannot allocate channel manager");
+        gw_error_set(error, GW_ERR_NO_MEMORY, "cannot allocate channel manager");
         return GW_ERR_NO_MEMORY;
     }
     manager->config = *config;
@@ -411,7 +386,7 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
     result = pthread_rwlock_init(&manager->snapshot_lock, NULL);
     if (result != 0) {
         free(manager);
-        set_error(error, GW_ERR_IO, "cannot initialize snapshot lock: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot initialize snapshot lock: %s",
                   strerror(result));
         return GW_ERR_IO;
     }
@@ -419,7 +394,7 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
     if (result != 0) {
         pthread_rwlock_destroy(&manager->snapshot_lock);
         free(manager);
-        set_error(error, GW_ERR_IO, "cannot initialize lifecycle lock: %s",
+        gw_error_set(error, GW_ERR_IO, "cannot initialize lifecycle lock: %s",
                   strerror(result));
         return GW_ERR_IO;
     }
@@ -441,7 +416,7 @@ gw_status gw_channel_manager_create(gw_channel_manager **manager_output,
         configure_entry(entry, &config->channels[index], config);
     }
     *manager_output = manager;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -451,13 +426,13 @@ gw_status gw_channel_manager_start(gw_channel_manager *manager, gw_error *error)
     gw_status status;
 
     if (manager == NULL) {
-        set_error(error, GW_ERR_ARGUMENT, "channel manager is required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "channel manager is required");
         return GW_ERR_ARGUMENT;
     }
     pthread_mutex_lock(&manager->lifecycle_lock);
     if (manager->started) {
         pthread_mutex_unlock(&manager->lifecycle_lock);
-        set_error(error, GW_ERR_VALIDATION, "channel manager is already started");
+        gw_error_set(error, GW_ERR_VALIDATION, "channel manager is already started");
         return GW_ERR_VALIDATION;
     }
     manager->started = true;
@@ -487,14 +462,14 @@ gw_status gw_channel_manager_start(gw_channel_manager *manager, gw_error *error)
             }
             manager->started = false;
             pthread_mutex_unlock(&manager->lifecycle_lock);
-            set_error(error, GW_ERR_IO, "cannot start metrics sampler: %s",
+            gw_error_set(error, GW_ERR_IO, "cannot start metrics sampler: %s",
                       strerror(result));
             return GW_ERR_IO;
         }
         manager->metrics_thread_started = true;
     }
     pthread_mutex_unlock(&manager->lifecycle_lock);
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -509,7 +484,7 @@ gw_status gw_channel_manager_reload(gw_channel_manager *manager,
     gw_status final_status = GW_OK;
 
     if (manager == NULL || candidate == NULL || summary == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "manager, candidate configuration, and summary are required");
         return GW_ERR_ARGUMENT;
     }
@@ -517,7 +492,7 @@ gw_status gw_channel_manager_reload(gw_channel_manager *manager,
     pthread_mutex_lock(&manager->lifecycle_lock);
     if (!manager->started || atomic_load(&manager->stop_signal) != 0) {
         pthread_mutex_unlock(&manager->lifecycle_lock);
-        set_error(error, GW_ERR_VALIDATION,
+        gw_error_set(error, GW_ERR_VALIDATION,
                   "channel manager is not available for reload");
         return GW_ERR_VALIDATION;
     }
@@ -567,7 +542,7 @@ gw_status gw_channel_manager_reload(gw_channel_manager *manager,
         }
         entry = find_free_entry(manager);
         if (entry == NULL) {
-            set_error(error, GW_ERR_OVERFLOW, "channel manager capacity exceeded");
+            gw_error_set(error, GW_ERR_OVERFLOW, "channel manager capacity exceeded");
             final_status = GW_ERR_OVERFLOW;
             break;
         }
@@ -582,7 +557,7 @@ gw_status gw_channel_manager_reload(gw_channel_manager *manager,
     manager->config = *candidate;
     *summary = changes;
     if (final_status == GW_OK) {
-        clear_error(error);
+        gw_error_clear(error);
     }
     pthread_mutex_unlock(&manager->lifecycle_lock);
     return final_status;
@@ -596,7 +571,7 @@ gw_status gw_channel_manager_get_snapshot(gw_channel_manager *manager,
     size_t index;
 
     if (manager == NULL || channel_id == NULL || snapshot == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "manager, channel id, and snapshot output are required");
         return GW_ERR_ARGUMENT;
     }
@@ -607,12 +582,12 @@ gw_status gw_channel_manager_get_snapshot(gw_channel_manager *manager,
             *snapshot = manager->entries[index].snapshot;
             attach_worker_metrics(&manager->entries[index], snapshot);
             pthread_rwlock_unlock(&manager->snapshot_lock);
-            clear_error(error);
+            gw_error_clear(error);
             return GW_OK;
         }
     }
     pthread_rwlock_unlock(&manager->snapshot_lock);
-    set_error(error, GW_ERR_NOT_FOUND, "channel '%s' is not managed", channel_id);
+    gw_error_set(error, GW_ERR_NOT_FOUND, "channel '%s' is not managed", channel_id);
     return GW_ERR_NOT_FOUND;
 }
 
@@ -625,7 +600,7 @@ gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
     size_t copied = 0U;
 
     if (manager == NULL || snapshots == NULL || count == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "manager, snapshot array, and count output are required");
         return GW_ERR_ARGUMENT;
     }
@@ -637,7 +612,7 @@ gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
         }
         if (copied >= capacity) {
             pthread_rwlock_unlock(&manager->snapshot_lock);
-            set_error(error, GW_ERR_OVERFLOW,
+            gw_error_set(error, GW_ERR_OVERFLOW,
                       "snapshot array capacity is too small");
             return GW_ERR_OVERFLOW;
         }
@@ -647,7 +622,7 @@ gw_status gw_channel_manager_list_snapshots(gw_channel_manager *manager,
     }
     pthread_rwlock_unlock(&manager->snapshot_lock);
     *count = copied;
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -669,13 +644,13 @@ static gw_status command_entry(gw_channel_manager *manager,
     gw_channel_entry *entry;
 
     if (!manager->started || atomic_load(&manager->stop_signal) != 0) {
-        set_error(error, GW_ERR_CONFLICT,
+        gw_error_set(error, GW_ERR_CONFLICT,
                   "channel manager is not available for control");
         return GW_ERR_CONFLICT;
     }
     entry = find_entry(manager, channel_id);
     if (entry == NULL) {
-        set_error(error, GW_ERR_NOT_FOUND, "channel '%s' is not managed",
+        gw_error_set(error, GW_ERR_NOT_FOUND, "channel '%s' is not managed",
                   channel_id);
         return GW_ERR_NOT_FOUND;
     }
@@ -692,7 +667,7 @@ gw_status gw_channel_manager_start_channel(gw_channel_manager *manager,
     gw_status status;
 
     if (manager == NULL || channel_id == NULL || channel_id[0] == '\0') {
-        set_error(error, GW_ERR_ARGUMENT, "manager and channel id are required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "manager and channel id are required");
         return GW_ERR_ARGUMENT;
     }
     pthread_mutex_lock(&manager->lifecycle_lock);
@@ -707,21 +682,21 @@ gw_status gw_channel_manager_start_channel(gw_channel_manager *manager,
     }
     if (entry->thread_started) {
         pthread_mutex_unlock(&manager->lifecycle_lock);
-        set_error(error, GW_ERR_CONFLICT, "channel '%s' is already active",
+        gw_error_set(error, GW_ERR_CONFLICT, "channel '%s' is already active",
                   channel_id);
         return GW_ERR_CONFLICT;
     }
     state = entry_state(entry);
     if (state != GW_CHANNEL_STOPPED && state != GW_CHANNEL_FAILED) {
         pthread_mutex_unlock(&manager->lifecycle_lock);
-        set_error(error, GW_ERR_CONFLICT, "channel '%s' cannot be started from %s",
+        gw_error_set(error, GW_ERR_CONFLICT, "channel '%s' cannot be started from %s",
                   channel_id, gw_channel_state_string(state));
         return GW_ERR_CONFLICT;
     }
     status = start_entry(entry, error);
     pthread_mutex_unlock(&manager->lifecycle_lock);
     if (status == GW_OK) {
-        clear_error(error);
+        gw_error_clear(error);
     }
     return status;
 }
@@ -734,7 +709,7 @@ gw_status gw_channel_manager_stop_channel(gw_channel_manager *manager,
     gw_status status;
 
     if (manager == NULL || channel_id == NULL || channel_id[0] == '\0') {
-        set_error(error, GW_ERR_ARGUMENT, "manager and channel id are required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "manager and channel id are required");
         return GW_ERR_ARGUMENT;
     }
     pthread_mutex_lock(&manager->lifecycle_lock);
@@ -749,12 +724,12 @@ gw_status gw_channel_manager_stop_channel(gw_channel_manager *manager,
             entry->thread_started = false;
         }
         pthread_mutex_unlock(&manager->lifecycle_lock);
-        set_error(error, GW_ERR_CONFLICT, "channel '%s' is not active", channel_id);
+        gw_error_set(error, GW_ERR_CONFLICT, "channel '%s' is not active", channel_id);
         return GW_ERR_CONFLICT;
     }
     stop_entry(entry);
     pthread_mutex_unlock(&manager->lifecycle_lock);
-    clear_error(error);
+    gw_error_clear(error);
     return GW_OK;
 }
 
@@ -766,7 +741,7 @@ gw_status gw_channel_manager_restart_channel(gw_channel_manager *manager,
     gw_status status;
 
     if (manager == NULL || channel_id == NULL || channel_id[0] == '\0') {
-        set_error(error, GW_ERR_ARGUMENT, "manager and channel id are required");
+        gw_error_set(error, GW_ERR_ARGUMENT, "manager and channel id are required");
         return GW_ERR_ARGUMENT;
     }
     pthread_mutex_lock(&manager->lifecycle_lock);
@@ -779,7 +754,7 @@ gw_status gw_channel_manager_restart_channel(gw_channel_manager *manager,
     status = start_entry(entry, error);
     pthread_mutex_unlock(&manager->lifecycle_lock);
     if (status == GW_OK) {
-        clear_error(error);
+        gw_error_clear(error);
     }
     return status;
 }

@@ -5,7 +5,6 @@
 
 #include "gateway/channel_state.h"
 #include "gateway/process_metrics.h"
-#include "gateway/probe.h"
 #include "gateway/progress_parser.h"
 
 #include <stdbool.h>
@@ -15,7 +14,6 @@
 
 typedef enum {
     GW_CHANNEL_PROCESS_NONE = 0,
-    GW_CHANNEL_PROCESS_PROBE,
     GW_CHANNEL_PROCESS_WORKER
 } gw_channel_process_kind;
 
@@ -32,8 +30,6 @@ typedef struct {
     /* Incremented by the manager when this channel's configuration is replaced. */
     uint64_t configuration_generation;
     int backoff_sec;
-    bool has_probe;
-    gw_probe_info probe;
     bool has_progress;
     gw_worker_progress progress;
     gw_process_metrics_snapshot worker_metrics;
@@ -53,11 +49,8 @@ void gw_channel_snapshot_set_process(gw_channel_snapshot *snapshot,
 void gw_channel_snapshot_clear_process(gw_channel_snapshot *snapshot,
                                        int exit_code, const char *event);
 
-/* Clear process-derived input/progress/resource data before a retry wait. */
+/* Clear process-derived progress/resource data before a retry wait. */
 void gw_channel_snapshot_clear_live_data(gw_channel_snapshot *snapshot);
-
-void gw_channel_snapshot_set_probe(gw_channel_snapshot *snapshot,
-                                   const gw_probe_info *probe);
 
 void gw_channel_snapshot_set_progress(gw_channel_snapshot *snapshot,
                                       const gw_worker_progress *progress,

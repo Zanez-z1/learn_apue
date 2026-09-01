@@ -161,7 +161,6 @@ int main(int argc, char **argv)
     atomic_init(&observations.healthy_restarted, false);
     make_config(&config, kind);
     gw_supervisor_options_init(&options);
-    options.ffprobe_binary = argv[1];
     options.ffmpeg_binary = argv[1];
     options.observer = observe_recovery;
     options.observer_context = &observations;

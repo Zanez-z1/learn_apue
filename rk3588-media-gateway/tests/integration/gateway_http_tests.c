@@ -21,7 +21,7 @@ static const char config_text[] =
     "server: {enabled: true, listen: 127.0.0.1, port: 0}\n"
     "mediamtx:\n"
     "  recording: {enabled: true, directory: /tmp, min_free_mb: 2147483647}\n"
-    "defaults: {probe_timeout_sec: 1, startup_timeout_sec: 1, "
+    "defaults: {startup_timeout_sec: 1, "
     "progress_timeout_sec: 5, stable_run_sec: 5, stop_timeout_sec: 1, "
     "max_retries: 1, max_backoff_sec: 1}\n"
     "channels:\n"
@@ -203,9 +203,6 @@ static int wait_for_metrics(unsigned int port, long different_pid,
                          sizeof(response)) == 0 &&
             strstr(response, "HTTP/1.1 200 OK") != NULL &&
             strstr(response, "\"state\":\"RUNNING\"") != NULL &&
-            strstr(response, "\"input\":{\"status\":\"available\","
-                             "\"codec\":\"h264\",\"width\":1920,"
-                             "\"height\":1080}") != NULL &&
             strstr(response, "\"progress\":{\"status\":\"available\"") !=
                 NULL &&
             strstr(response, "\"fps\":25.000") != NULL &&
@@ -343,11 +340,9 @@ int main(int argc, char **argv)
     arguments[0] = argv[1];
     arguments[1] = "--config";
     arguments[2] = config_path;
-    arguments[3] = "--ffprobe-binary";
+    arguments[3] = "--ffmpeg-binary";
     arguments[4] = argv[2];
-    arguments[5] = "--ffmpeg-binary";
-    arguments[6] = argv[2];
-    arguments[7] = NULL;
+    arguments[5] = NULL;
     result = posix_spawn_file_actions_init(&actions);
     if (result != 0) {
         goto cleanup;

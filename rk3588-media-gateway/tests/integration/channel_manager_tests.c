@@ -64,7 +64,6 @@ static void test_two_channel_success(const char *fixture)
 
     make_config(&config, false);
     gw_supervisor_options_init(&options);
-    options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     options.stop_on_clean_exit = true;
     options.exit_on_retry_exhaustion = true;
@@ -99,7 +98,6 @@ static void test_channel_failure_isolation(const char *fixture)
 
     make_config(&config, true);
     gw_supervisor_options_init(&options);
-    options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     options.stop_on_clean_exit = true;
     options.exit_on_retry_exhaustion = true;
@@ -131,7 +129,6 @@ static void test_stop_all_channels(const char *fixture)
 
     make_config(&config, false);
     gw_supervisor_options_init(&options);
-    options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     options.stop_signal = &stop_signal;
     CHECK(gw_channel_manager_create(&manager, &config, &options, &error) == GW_OK);
@@ -279,7 +276,6 @@ static void test_channel_controls(const char *fixture)
     snprintf(config.channels[1].input.url, sizeof(config.channels[1].input.url),
              "%s", "rtsp://fixture-user:fixture-password@camera/hold-two");
     gw_supervisor_options_init(&options);
-    options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     CHECK(gw_channel_manager_create(&manager, &config, &options, &error) == GW_OK);
     CHECK(gw_channel_manager_start_channel(manager, "cam01", &error) ==
@@ -360,7 +356,6 @@ static void test_differential_reload(const char *fixture)
     snprintf(config.channels[1].input.url, sizeof(config.channels[1].input.url),
              "%s", "rtsp://fixture-user:fixture-password@camera/hold-two");
     gw_supervisor_options_init(&options);
-    options.ffprobe_binary = fixture;
     options.ffmpeg_binary = fixture;
     CHECK(gw_channel_manager_create(&manager, &config, &options, &error) == GW_OK);
     CHECK(gw_channel_manager_start(manager, &error) == GW_OK);

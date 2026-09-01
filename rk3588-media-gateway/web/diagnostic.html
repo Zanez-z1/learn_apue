@@ -88,7 +88,6 @@
       <div class="row"><span class="key">channel</span><span class="value" id="channel">unavailable</span></div>
       <div class="row"><span class="key">state</span><span class="state" id="state">unavailable</span></div>
       <div class="row"><span class="key">FFmpeg PID</span><span class="value" id="pid">unavailable</span></div>
-      <div class="row"><span class="key">input</span><span class="value" id="input">unavailable</span></div>
       <div class="row"><span class="key">FPS</span><span class="value" id="fps">unavailable</span></div>
       <div class="row"><span class="key">bitrate</span><span class="value" id="bitrate">unavailable</span></div>
       <div class="row"><span class="key">frames / dropped</span><span class="value" id="frames">unavailable</span></div>
@@ -160,7 +159,7 @@
     };
 
     function clearLive() {
-      for (const id of ["pid", "input", "fps", "bitrate", "frames", "cpu", "rss"]) {
+      for (const id of ["pid", "fps", "bitrate", "frames", "cpu", "rss"]) {
         put(id, null);
       }
     }
@@ -177,9 +176,6 @@
       put("pid", data.ffmpeg_pid);
       put("failures", `${data.consecutive_failures} / ${data.total_restarts}`);
 
-      if (data.input && data.input.status === "available") {
-        put("input", `${data.input.codec} ${data.input.width}x${data.input.height}`);
-      }
       if (data.progress && data.progress.status === "available") {
         put("fps", data.progress.fps);
         put("bitrate", data.progress.bitrate);

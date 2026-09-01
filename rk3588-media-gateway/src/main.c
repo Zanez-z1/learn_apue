@@ -5,7 +5,6 @@
 #include "gateway/config.h"
 #include "gateway/http_server.h"
 #include "gateway/mediamtx_config.h"
-#include "gateway/pipeline_builder.h"
 #include "gateway/supervisor.h"
 
 #include <errno.h>
@@ -78,8 +77,8 @@ static bool recording_config_equal(const gw_recording_config *first,
 
 static void print_usage(const char *program)
 {
-    printf("Usage: %s --config PATH [--check-config | --dry-run] "
-           "[--print-mediamtx-config] [--exit-when-idle] [--ffprobe-binary PATH] "
+    printf("Usage: %s --config PATH [--check-config] "
+           "[--print-mediamtx-config] [--exit-when-idle] "
            "[--ffmpeg-binary PATH]\n",
            program);
 }
@@ -100,40 +99,6 @@ static int print_mediamtx_config(const gw_config *config)
         fprintf(stderr, "Cannot write MediaMTX configuration: %s\n",
                 strerror(errno));
         return 1;
-    }
-    return 0;
-}
-
-static int run_dry_run(const gw_config *config, const char *ffmpeg_binary)
-{
-    gw_error error = {0};
-    size_t index;
-
-    /* Build the exact argv for each channel without creating child processes. */
-    for (index = 0U; index < config->channel_count; ++index) {
-        const gw_channel_config *channel = &config->channels[index];
-        gw_pipeline_argv arguments;
-        char command[8192];
-        gw_status status;
-
-        if (!channel->enabled) {
-            printf("channel=%s disabled\n", channel->id);
-            continue;
-        }
-        status = gw_pipeline_build(channel, &config->mediamtx, ffmpeg_binary,
-                                   &arguments, &error);
-        if (status == GW_OK) {
-            status = gw_pipeline_render_redacted(&arguments, command,
-                                                 sizeof(command), &error);
-        }
-        if (status != GW_OK) {
-            fprintf(stderr, "channel=%s pipeline error (%s): %s\n", channel->id,
-                    gw_status_string(status), error.message);
-            gw_pipeline_argv_free(&arguments);
-            return 1;
-        }
-        printf("channel=%s command=%s\n", channel->id, command);
-        gw_pipeline_argv_free(&arguments);
     }
     return 0;
 }
@@ -252,7 +217,6 @@ static int run_channels(const char *config_path, const gw_config *config,
 int main(int argc, char **argv)
 {
     const char *config_path = NULL;
-    bool dry_run = false;
     bool check_only = false;
     bool print_mediamtx = false;
     bool exit_when_idle = false;
@@ -270,8 +234,6 @@ int main(int argc, char **argv)
     for (argument = 1; argument < argc; ++argument) {
         if (strcmp(argv[argument], "--config") == 0 && argument + 1 < argc) {
             config_path = argv[++argument];
-        } else if (strcmp(argv[argument], "--dry-run") == 0) {
-            dry_run = true;
         } else if (strcmp(argv[argument], "--check-config") == 0) {
             check_only = true;
         } else if (strcmp(argv[argument], "--print-mediamtx-config") == 0) {
@@ -280,9 +242,6 @@ int main(int argc, char **argv)
             exit_when_idle = true;
             options.stop_on_clean_exit = true;
             options.exit_on_retry_exhaustion = true;
-        } else if (strcmp(argv[argument], "--ffprobe-binary") == 0 &&
-                   argument + 1 < argc) {
-            options.ffprobe_binary = argv[++argument];
         } else if (strcmp(argv[argument], "--ffmpeg-binary") == 0 &&
                    argument + 1 < argc) {
             options.ffmpeg_binary = argv[++argument];
@@ -296,9 +255,8 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    if (config_path == NULL || (dry_run ? 1 : 0) + (check_only ? 1 : 0) +
-                                   (print_mediamtx ? 1 : 0) >
-                                   1) {
+    if (config_path == NULL || (check_only ? 1 : 0) +
+                                   (print_mediamtx ? 1 : 0) > 1) {
         print_usage(argv[0]);
         return 2;
     }
@@ -315,9 +273,6 @@ int main(int argc, char **argv)
     }
     if (check_only) {
         return 0;
-    }
-    if (dry_run) {
-        return run_dry_run(&config, options.ffmpeg_binary);
     }
     if (print_mediamtx) {
         return print_mediamtx_config(&config);

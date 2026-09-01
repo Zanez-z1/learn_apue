@@ -18,7 +18,6 @@ static void test_snapshot_updates(void)
     gw_channel_config channel = {0};
     gw_channel_runtime runtime = {0};
     gw_channel_snapshot snapshot;
-    gw_probe_info probe = {0};
     gw_worker_progress progress = {0};
 
     snprintf(channel.id, sizeof(channel.id), "%s", "cam01");
@@ -28,7 +27,6 @@ static void test_snapshot_updates(void)
     CHECK(snapshot.state == GW_CHANNEL_STOPPED);
     CHECK(snapshot.process_kind == GW_CHANNEL_PROCESS_NONE);
     CHECK(snapshot.process_pid == -1);
-    CHECK(!snapshot.has_probe);
     CHECK(!snapshot.has_progress);
     CHECK(!snapshot.has_exit_code);
 
@@ -43,18 +41,11 @@ static void test_snapshot_updates(void)
     CHECK(snapshot.backoff_sec == 8);
     CHECK(strcmp(snapshot.last_event, "worker_failure") == 0);
 
-    gw_channel_snapshot_set_process(&snapshot, GW_CHANNEL_PROCESS_PROBE, 42,
-                                    "probe_started");
-    CHECK(snapshot.process_kind == GW_CHANNEL_PROCESS_PROBE);
+    gw_channel_snapshot_set_process(&snapshot, GW_CHANNEL_PROCESS_WORKER, 42,
+                                    "worker_started");
+    CHECK(snapshot.process_kind == GW_CHANNEL_PROCESS_WORKER);
     CHECK(snapshot.process_pid == 42);
     CHECK(!snapshot.has_exit_code);
-
-    snprintf(probe.codec_name, sizeof(probe.codec_name), "%s", "h264");
-    probe.width = 1920;
-    probe.height = 1080;
-    gw_channel_snapshot_set_probe(&snapshot, &probe);
-    CHECK(snapshot.has_probe);
-    CHECK(strcmp(snapshot.probe.codec_name, "h264") == 0);
 
     progress.frame = 125U;
     progress.fps = 25.0;
@@ -76,17 +67,16 @@ static void test_snapshot_updates(void)
     snapshot.worker_metrics.cpu_available = true;
     snapshot.worker_metrics.pid = 43;
     gw_channel_snapshot_clear_live_data(&snapshot);
-    CHECK(!snapshot.has_probe);
     CHECK(!snapshot.has_progress);
     CHECK(!snapshot.worker_metrics.available);
     CHECK(snapshot.worker_metrics.pid == -1);
 
-    gw_channel_snapshot_clear_process(&snapshot, 143, "probe_timeout");
+    gw_channel_snapshot_clear_process(&snapshot, 143, "startup_timeout");
     CHECK(snapshot.process_kind == GW_CHANNEL_PROCESS_NONE);
     CHECK(snapshot.process_pid == -1);
     CHECK(snapshot.has_exit_code);
     CHECK(snapshot.last_exit_code == 143);
-    CHECK(strcmp(snapshot.last_event, "probe_timeout") == 0);
+    CHECK(strcmp(snapshot.last_event, "startup_timeout") == 0);
     CHECK(strcmp(gw_channel_process_kind_string(GW_CHANNEL_PROCESS_WORKER),
                  "WORKER") == 0);
 }

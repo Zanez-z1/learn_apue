@@ -20,14 +20,13 @@ MediaMTX 播放和录像。
 main.c
   -> gw_config_load_file() / gw_config_validate()
   -> gw_channel_manager_create()
-  -> 每个通道启动独立线程
+      -> 每个通道启动独立线程
       -> gw_supervisor_run()
-          -> run_probe_attempt()：构造并运行 ffprobe 探测
           -> gw_pipeline_build()：生成 FFmpeg argv
           -> gw_process_start()：posix_spawnp 创建子进程
           -> poll() 读取 progress/stderr，检查退出和超时
           -> 成功：RUNNING
-          -> 失败：BACKOFF -> 再次 PROBING
+          -> 失败：BACKOFF -> 再次 STARTING
   -> HTTP 线程查询快照或向 Channel Manager 发送控制命令
   -> SIGINT/SIGTERM：停止线程并回收所有子进程
 ```
@@ -94,7 +93,7 @@ mapping_value()
 1. 输入 URL、解码器、分辨率、编码器和输出路径如何变成 `argv[]`。
 2. 为什么返回参数数组，而不是拼接一个 shell 字符串。
 3. `-progress pipe:1`、`-an`、MPP/RGA、GOP 和 RTSP/TCP 参数分别解决什么问题。
-4. dry-run 为什么能打印命令，却不会创建 FFmpeg。
+4. 构造好的 `argv[]` 为什么可以直接交给 `posix_spawnp()`。
 
 读完应能根据一条 channel 配置，手工说出生成命令的输入、硬件处理和输出三部分。
 
@@ -115,19 +114,17 @@ mapping_value()
 
 读完应能解释：FFmpeg 崩溃后，网关如何知道旧 PID 已经结束并安全创建新进程。
 
-### 第 5 层：输入探测和运行进度
+### 第 5 层：运行进度
 
 文件：
 
-- `src/probe/probe.c`
 - `src/monitor/progress_parser.c`
 - 对应的 `include/gateway/*.h`
 
-`probe.c` 启动 ffprobe，在 FFmpeg 前确认 RTSP 可达、首个视频流的编码和尺寸，并检查输入
-编码是否适合配置的硬件解码器。`progress_parser.c` 增量解析 FFmpeg
-`-progress pipe:1` 的键值记录，不依赖普通日志的自然语言格式。
+`progress_parser.c` 增量解析 FFmpeg `-progress pipe:1` 的键值记录，不依赖普通日志的
+自然语言格式。
 
-读完应能区分三类失败：输入探测失败、工作进程已经退出、工作进程仍在但长时间没有进度。
+读完应能区分两类失败：工作进程已经退出，以及工作进程仍在但长时间没有进度。
 
 ### 第 6 层：状态机和自动恢复
 
@@ -141,19 +138,19 @@ mapping_value()
 先读纯状态转换 `channel_state.c`，再读负责 I/O 和时间的 `supervisor.c`。关键路径：
 
 ```text
-PROBING -> STARTING -> RUNNING
-   ^                       |
-   |                       | 退出、启动超时或 progress 超时
-   +------ BACKOFF <-------+
+STARTING -> RUNNING
+   ^           |
+   |           | 退出、启动超时或 progress 超时
+   +-- BACKOFF-+
    ^
    | max_backoff_sec
  FAILED
 ```
 
 `supervisor` 每 250ms 左右轮询管道和进程状态；失败后清理旧工作进程，按有上限的退避时间
-等待，再重新从 ffprobe 开始。连续稳定运行达到 `stable_run_sec` 后，连续失败计数会清零。
+等待，再重新启动 FFmpeg。连续稳定运行达到 `stable_run_sec` 后，连续失败计数会清零。
 超过 `max_retries` 后进入 `FAILED`，但默认 supervisor 线程仍存活，并按
-`max_backoff_sec` 低频执行 `FAILED -> PROBING`。stop、disable、配置 reload 和进程退出会
+`max_backoff_sec` 低频执行 `FAILED -> STARTING`。stop、disable、配置 reload 和进程退出会
 通过短周期 stop check 打断这段等待。`--exit-when-idle` 才把重试耗尽视为一次性运行结束。
 
 读完应能准确说明：网关恢复的是本机 FFmpeg/RTSP 会话，不会让远程摄像头断电重启。
@@ -181,7 +178,7 @@ PROBING -> STARTING -> RUNNING
 
 最后阅读 `src/main.c`。此时再看 main，应该只剩下“把模块装配起来”：
 
-- 解析 `--config`、`--check-config`、`--dry-run` 等 CLI 参数。
+- 解析 `--config`、`--check-config` 等 CLI 参数。
 - 加载配置并处理三种检查模式。
 - 安装 SIGINT、SIGTERM、SIGHUP 信号处理。
 - 创建 Channel Manager 和 HTTP 线程。
@@ -195,14 +192,14 @@ PROBING -> STARTING -> RUNNING
 ### 4.1 启动流程
 
 ```text
-YAML -> 默认值 -> 读取 -> 校验 -> 通道线程 -> ffprobe -> FFmpeg -> RUNNING
+YAML -> 默认值 -> 读取 -> 校验 -> 通道线程 -> FFmpeg -> RUNNING
 ```
 
 ### 4.2 断流恢复流程
 
 ```text
 RTSP EOF/错误 -> FFmpeg 退出 -> waitpid 得到结果 -> 清理管道和 PID
--> BACKOFF -> ffprobe 重试 -> 摄像头恢复后启动新 FFmpeg -> RUNNING
+-> BACKOFF -> 重新启动 FFmpeg -> 摄像头恢复后进入 RUNNING
 ```
 
 如果 FFmpeg 没退出但不再产生 progress，则由 `progress_timeout_sec` 触发停止和重建。
@@ -245,9 +242,9 @@ SIGTERM/SIGINT -> 停止接受新控制 -> 通知全部通道
 1. 为什么每路使用独立 FFmpeg 进程，而不是一个进程处理所有通道？
 2. 为什么使用 `posix_spawnp()`，它与 `system()` 的安全边界有什么不同？
 3. 如何同时检测 FFmpeg 崩溃和“进程没死但卡住”？
-4. `RUNNING -> BACKOFF -> PROBING` 每一步由什么事件触发？
+4. `RUNNING -> BACKOFF -> STARTING` 每一步由什么事件触发？
 5. 单路断流为什么不会重启健康通道？
-6. `--check-config`、`--dry-run` 和真正运行有什么差别？
+6. `--check-config` 和真正运行有什么差别？
 7. SIGHUP 配置错误时，为什么现有通道不会中断？
 8. 哪部分是你写的，哪部分来自 FFmpeg-Rockchip 和 MediaMTX？
 9. MPP/RGA 性能数据使用了什么输入、窗口和限制，为什么不能随意外推？
@@ -258,7 +255,7 @@ SIGTERM/SIGINT -> 停止接受新控制 -> 通知全部通道
 只有自己能解释并且测试记录已经支持的内容才能使用。例如：
 
 > 基于 C17 和 RK3588 实现多通道媒体任务管理服务，使用独立 supervisor 管理
-> FFmpeg-Rockchip 子进程，通过 ffprobe 预检、结构化 progress 超时、进程回收和有上限
+> FFmpeg-Rockchip 子进程，通过结构化 progress 超时、进程回收和有上限
 > 退避实现单通道故障隔离与 RTSP 断流恢复；完成 MPP/RGA 硬件转码、HTTP 控制、SIGHUP
 > 差异化重载及 systemd 非 root 部署。
 
@@ -266,11 +263,360 @@ SIGTERM/SIGINT -> 停止接受新控制 -> 通知全部通道
 最大吞吐/在线运行的区别。不要把重复固定样本的四路微基准写成“四路真实摄像头长期
 稳定运行”。
 
-## 8. 文档地图
+## 8. 当前阅读进度
 
-- [从零跑通与演示完整视频链路](demo.md)：第一次运行和五分钟演示。
+- 已完成：配置结构、libyaml 解析、环境变量展开和公共错误处理。
+- 已完成：`pipeline_builder.h` 与 `gw_pipeline_build()`，包括 argv 所有权、
+  FFmpeg 输入/输出参数、MPP/RGA、码率、FPS 和 GOP。
+- 已完成：`process_manager.c`，包括管道所有权、`posix_spawnp()`、非阻塞读取、退出检查、
+  超时停止和子进程回收。
+- 已删除：启动前 ffprobe 预检；supervisor 现在直接启动 FFmpeg，由启动超时、运行进度和
+  退出状态判断输入及工作进程故障。
+- 已完成：`progress_parser.h` 与 `progress_parser.c`，理解 FFmpeg progress 分片输入、逐行
+  拼接和 `progress=continue/end` 记录边界。
+- 阅读中：`channel_state.h` 与 `channel_state.c`。
+
+后续阅读只在本节更新进度，不再建立额外的开发流水账文档。
+
+### Process Manager：管道端点所有权
+
+`pipe[0]` 固定为读端，`pipe[1]` 固定为写端。创建管道后、启动 FFmpeg 前，四个端点暂时
+都由 gatewayd 持有：
+
+```text
+stdout_pipe[0]：准备由 gatewayd 读取 progress
+stdout_pipe[1]：准备交给 FFmpeg 写 stdout
+stderr_pipe[0]：准备由 gatewayd 读取错误日志
+stderr_pipe[1]：准备交给 FFmpeg 写 stderr
+```
+
+启动时将两个写端复制到 FFmpeg 的标准文件描述符：
+
+```text
+dup2(stdout_pipe[1], 1)  -> FFmpeg stdout
+dup2(stderr_pipe[1], 2)  -> FFmpeg stderr
+```
+
+启动完成后的最终所有权和数据方向：
+
+```text
+FFmpeg fd 1 -> stdout 管道 -> gatewayd stdout_pipe[0]
+FFmpeg fd 2 -> stderr 管道 -> gatewayd stderr_pipe[0]
+```
+
+gatewayd 只保留两个读端；FFmpeg 只保留复制后的 fd 1、fd 2。双方都关闭不再使用的原始
+端点。原始端点还设置 `FD_CLOEXEC` 作为防泄漏保护，否则其他进程意外持有写端时，
+gatewayd 可能在 FFmpeg 退出后仍收不到 EOF。
+
+### Process Manager：启动 FFmpeg
+
+父进程是 gatewayd，子进程是 FFmpeg。`gw_process` 位于 gatewayd 内存中，是管理一个
+FFmpeg 的记录，不是子进程内部结构：
+
+```text
+gw_process.pid       -> 被管理的 FFmpeg PID
+gw_process.stdout_fd -> gatewayd 持有的 stdout 管道读端
+gw_process.stderr_fd -> gatewayd 持有的 stderr 管道读端
+```
+
+`posix_spawnp()` 创建子进程时，子进程先继承 gatewayd 当时打开的四个管道端点。随后
+按 `actions` 在子进程中执行：
+
+```text
+dup2(stdout_pipe[1], 1)
+dup2(stderr_pipe[1], 2)
+close(stdout_pipe[0])
+close(stdout_pipe[1])
+close(stderr_pipe[0])
+close(stderr_pipe[1])
+```
+
+关闭的是子进程继承的原始描述符，不影响父进程自己的描述符表。`dup2()` 后，FFmpeg
+只需保留 fd 1 和 fd 2。启动成功后，gatewayd 再关闭自己持有的两个写端，并把两个读端
+转移到 `gw_process`：
+
+```text
+FFmpeg fd 1 -> stdout 管道 -> gw_process.stdout_fd -> progress 解析
+FFmpeg fd 2 -> stderr 管道 -> gw_process.stderr_fd -> 错误日志
+```
+
+`gw_process_start()` 的完整顺序：
+
+```text
+检查参数 -> 创建/配置两条管道 -> 初始化 actions -> 登记 dup2/close
+-> 初始化 attributes -> 设置进程组和信号 -> posix_spawnp 启动
+-> 父进程关闭写端 -> 保存子 PID 和两个读端
+```
+
+任一步失败都跳到统一的 `fail` 分支，只销毁已经初始化的 spawn 对象，并关闭已经创建的
+管道端点，避免描述符和内存资源泄漏。
+
+### Process Manager：读取子进程管道
+
+`gw_process_read()` 对 FFmpeg stdout 或 stderr 做一次非阻塞读取。主要参数：
+
+```text
+process       管理 FFmpeg PID 和父进程持有的两个管道读端
+stream        选择 GW_PROCESS_STDOUT 或 GW_PROCESS_STDERR
+buffer        接收本次读取的原始字节，不保证自动添加 '\0'
+capacity      buffer 可写容量
+bytes_read    返回本次实际读取的字节数
+end_of_stream 返回管道是否已经 EOF
+error         可选的详细错误
+```
+
+`bytes_read` 和 `end_of_stream` 必须同时存在，因为读取 0 字节可能只是暂时无数据，也可能
+是所有写端都已关闭。返回组合：
+
+```text
+GW_OK + bytes_read > 0 + end=false -> 读到数据
+GW_OK + bytes_read = 0 + end=false -> 暂时无数据，稍后再读
+GW_OK + bytes_read = 0 + end=true  -> 管道结束，读端已关闭
+GW_ERR_IO                         -> 真正读取错误
+```
+
+当 `read()` 返回 `-1` 时检查 `<errno.h>` 中的错误码：
+
+```text
+EAGAIN / EWOULDBLOCK -> 非阻塞 fd 当前无数据，不是故障
+EINTR                 -> read 被信号打断，可以重试
+其他 errno            -> 真正 I/O 错误
+```
+
+写类似代码时不必死背全部错误码，应查看 `man 2 read` 的 `ERRORS`，结合当前 fd 已设置
+`O_NONBLOCK`，把错误分成“可重试”和“真正失败”两类。
+
+### Process Manager：检查并回收子进程
+
+`gw_process_poll_exit()` 非阻塞检查 FFmpeg 是否退出。主要参数：
+
+```text
+process  保存 FFmpeg PID、运行状态和原始 wait_status
+exited   返回 FFmpeg 是否已经退出并被回收
+error    可选的详细错误
+```
+
+这里必须区分“检查操作”和“被检查的进程状态”：
+
+```text
+gw_status -> gatewayd 是否成功完成这次检查
+exited    -> 检查成功后，FFmpeg 已退出还是仍在运行
+```
+
+因此 `GW_OK` 不是说 FFmpeg 一定运行正常，而是 `waitpid()` 成功给出了可靠结果：
+
+```text
+GW_OK + exited=false -> 成功确认 FFmpeg 仍在运行
+GW_OK + exited=true  -> 成功确认 FFmpeg 已退出
+错误状态             -> 检查失败，不能读取 exited 判断进程状态
+```
+
+核心调用：
+
+```c
+waitpid(process->pid, &process->wait_status, WNOHANG);
+```
+
+`WNOHANG` 表示 FFmpeg 仍运行时立即返回，不阻塞 supervisor。主要返回值：
+
+```text
+0                  -> FFmpeg 还未退出，exited=false
+process->pid       -> FFmpeg 已退出且已回收，running=false、reaped=true
+-1 + errno=EINTR   -> 本次检查被信号打断，稍后重试
+其他负值           -> 真正的 waitpid 错误
+```
+
+`waitpid()` 在确认退出的同时完成回收，避免僵尸进程。进程退出不代表管道已经读空；上层
+仍需继续读取 stdout/stderr 中的缓冲数据，直到两个读端都收到 EOF。
+
+### Process Manager：停止 FFmpeg
+
+`gw_process_stop(process, timeout_ms, error)` 尝试在指定毫秒数内停止 FFmpeg，并确保子进程
+被 `waitpid()` 回收。整体流程：
+
+```text
+检查参数和进程状态
+-> 向 FFmpeg 所在的整个进程组发送 SIGTERM
+-> 在 timeout_ms 内每隔 10ms 非阻塞检查一次退出状态
+-> 已退出：立即返回 GW_OK
+-> 超时仍未退出：向整个进程组发送 SIGKILL
+-> 阻塞 waitpid，直到子进程被回收
+```
+
+开始时的三个分支分别表示：
+
+```text
+process == NULL 或 timeout_ms < 0 -> 调用参数错误
+process->reaped == true           -> 已经回收，无需重复停止，返回 GW_OK
+process->pid <= 0                 -> 进程从未成功启动
+```
+
+发送信号时使用的是负 PID：
+
+```c
+kill(-process->pid, SIGTERM);
+```
+
+负 PID 表示信号发给进程组，而不是只发给 FFmpeg 主进程。这样 FFmpeg 创建的辅助进程也会
+一起停止。`ESRCH` 表示目标已经不存在，在停止流程中不作为错误处理。
+
+`make_deadline(timeout_ms)` 根据当前单调时钟计算绝对截止时间；循环内调用
+`gw_process_poll_exit()`，并短暂休眠 10ms，避免持续占用 CPU。检查结果要分开处理：
+
+```c
+if (status != GW_OK) {
+    return status;       /* waitpid 检查本身失败 */
+}
+if (exited) {
+    return GW_OK;        /* 检查成功，而且 FFmpeg 已退出并被回收 */
+}
+```
+
+到达截止时间后还会再检查一次，避免 FFmpeg 恰好在循环结束时退出却被误发 `SIGKILL`。
+如果仍未退出，才发送 `SIGKILL`。最后的 `wait_after_kill()` 使用阻塞式 `waitpid()`，因为
+发出强制终止信号并不等于子进程已经被内核回收；省略这一步会留下僵尸进程。
+
+### Process Manager：解析退出码
+
+`gw_process_exit_code()` 解析 `waitpid()` 保存到 `process->wait_status` 中的原始状态。
+`wait_status` 不等于子进程的退出码，必须先判断退出类型，再使用与之配对的宏取值：
+
+```text
+WIFEXITED(status)    -> 判断子进程是否通过 exit() 或 main 返回而正常退出
+WEXITSTATUS(status)  -> 取得正常退出码
+
+WIFSIGNALED(status)  -> 判断子进程是否被信号终止
+WTERMSIG(status)     -> 取得终止它的信号编号
+```
+
+正常退出示例：
+
+```c
+if (WIFEXITED(wait_status)) {
+    code = WEXITSTATUS(wait_status);
+}
+```
+
+如果 FFmpeg 执行 `exit(2)`，`WIFEXITED()` 为非零，`WEXITSTATUS()` 得到 `2`。
+
+信号终止示例：
+
+```c
+if (WIFSIGNALED(wait_status)) {
+    code = 128 + WTERMSIG(wait_status);
+}
+```
+
+例如 FFmpeg 被 `SIGKILL` 终止：
+
+```text
+SIGKILL 的信号编号 = 9
+最终返回值 = 128 + 9 = 137
+```
+
+这是 Shell 常用的信号退出码表示习惯：
+
+```text
+130 = 128 + SIGINT(2)
+137 = 128 + SIGKILL(9)
+143 = 128 + SIGTERM(15)
+```
+
+必须先调用 `WIFEXITED()` 或 `WIFSIGNALED()` 判断类型，不能直接读取 `wait_status`，也不能
+在未确认类型时调用对应的取值宏。
+
+### Channel State：状态机全貌
+
+状态表示通道“当前处于什么阶段”，事件表示“刚刚发生了什么”。状态机只计算
+`旧状态 + 事件 + 重试策略 -> 新状态`，不负责启动 FFmpeg、创建线程或真正等待；这些操作
+由 supervisor 完成。
+
+六种状态：
+
+```text
+DISABLED  配置中禁用了通道
+STOPPED   通道可用，但当前没有运行
+STARTING  正在启动 FFmpeg，等待第一份完整 progress
+RUNNING   已收到 FFmpeg progress，工作进程正在运行
+BACKOFF   本次运行失败，等待一段时间后重试
+FAILED    连续失败超过上限，按最大退避时间低频重试
+```
+
+八种事件：
+
+```text
+ENABLE           启用通道
+DISABLE          禁用通道
+START            首次启动或手动启动
+PROGRESS         收到一份完整 FFmpeg progress
+FAILURE          启动失败、进程退出或 progress 超时
+BACKOFF_ELAPSED  本次退避等待结束
+STABLE           已连续稳定运行指定时间
+STOP             主动停止通道
+```
+
+主要转换：
+
+```text
+DISABLED -- ENABLE --> STOPPED
+
+STOPPED -- START --> STARTING -- PROGRESS --> RUNNING
+                          |                      |
+                          | FAILURE              | FAILURE
+                          v                      |
+                       BACKOFF <-----------------+
+                          |
+                   BACKOFF_ELAPSED
+                          v
+                       STARTING
+
+连续失败超过 max_retries：STARTING/RUNNING -- FAILURE --> FAILED
+低频等待结束：            FAILED -- BACKOFF_ELAPSED --> STARTING
+主动停止：                非 DISABLED 状态 -- STOP --> STOPPED
+```
+
+`FAILED` 不是默认守护模式下的永久终态。supervisor 仍会等待 `max_backoff_sec`，再触发
+`BACKOFF_ELAPSED` 重新启动；只有一次性运行模式才会在重试耗尽后退出。
+
+`gw_channel_runtime` 保存每个通道的可变运行状态：
+
+```text
+state                 当前状态
+consecutive_failures  从上次稳定运行或手动启动以来的连续失败次数
+total_restarts        已执行的自动重启总次数
+backoff_sec           当前 BACKOFF/FAILED 需要等待的秒数
+```
+
+其中连续失败次数在收到 `STABLE` 或手动 `START/STOP` 后清零；累计重启次数不会随稳定运行
+清零，用于反映通道生命周期内发生过多少次自动恢复。
+
+#### 指数退避
+
+退避表示操作失败后先等待一段时间再重试；指数退避表示连续失败越多，等待时间按倍数
+增长。`calculate_backoff()` 使用的基本规律是：
+
+```text
+等待时间 = 2^(连续失败次数 - 1)
+```
+
+当 `max_backoff_sec=30` 时，实际序列为：
+
+```text
+第 1 次失败 -> 1 秒
+第 2 次失败 -> 2 秒
+第 3 次失败 -> 4 秒
+第 4 次失败 -> 8 秒
+第 5 次失败 -> 16 秒
+第 6 次及以后 -> 30 秒
+```
+
+代码在执行 `delay *= 2` 前先比较 `delay > maximum / 2`；如果下一次翻倍会超过上限，就
+直接使用最大值，避免越界和无意义的继续增长。指数退避让偶发断流能够快速重连，同时
+避免输入长期不可用时不停创建 FFmpeg、占用 CPU 和刷日志。
+
+## 9. 文档地图
+
+- [单路摄像头用户手册](user-manual.md)：第一次运行和五分钟演示。
 - [架构设计](../ARCHITECTURE.md)：设计决策、线程/状态机和系统边界。
 - [systemd 部署指南](deployment.md)：前台验证后，安装为非 root systemd 服务。
-- [测试与验收指南](test-plan.md)：测试方法和真实验收记录，不适合第一次运行时从头阅读。
 - [性能测试结果](benchmark-results.md)：可以在简历和面试中引用的性能数据及限制。
-- [开发状态](development-status.md)：开发历史和上下文恢复记录，不是用户手册。

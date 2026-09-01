@@ -16,6 +16,9 @@ Web 管理前端、音频或 AI。
 
 ## 五分钟真实摄像头演示
 
+第一次接触 Linux、RTSP 或命令行时，请直接阅读
+[单路摄像头用户手册（零基础版）](docs/user-manual.md)。下面是熟悉终端后的精简命令。
+
 前提是 PC 与板卡在同一可信局域网，板卡已经按部署文档安装服务，PC 的 MediaMTX v1.20
 二进制位于持久目录（示例为 `$HOME/mediamtx/mediamtx`）。当前实板地址是
 `192.168.1.45`；换网络后只替换以下 `BOARD_IP` 和浏览器 URL 中的同一个地址。
@@ -61,12 +64,11 @@ http://127.0.0.1:9080/view/cam01?media_host=192.168.1.45
 帧数/丢帧、失败/重启计数和 CPU/RSS。结束时分别在摄像头源终端和 SSH 隧道终端按
 `Ctrl+C`；源脚本只清理本轮启动的两个明确 PID。需要演示重复断流时，在源脚本终端输入
 `s` 并按回车只停止 FFmpeg，观察离线后输入 `r` 并按回车恢复发布；PC MediaMTX 在两步
-之间保持运行。
+之间保持运行。完整操作和故障排查见[单路摄像头用户手册](docs/user-manual.md)。
 
 网络上，SSH 隧道只承载 gatewayd 页面和 JSON（9080）。iframe 从浏览器直接访问板卡
 MediaMTX `BOARD_IP:8889` 完成 WebRTC HTTP 信令，媒体数据直接走板卡 `8189/UDP` ICE；
-因此不能把 `-L 8889` 当作完整 WebRTC 隧道。详细原理、故障恢复和手工排查见
-[完整演示指南](docs/demo.md)。
+因此不能把 `-L 8889` 当作完整 WebRTC 隧道。
 
 当前已实现的主要能力包括：
 
@@ -74,11 +76,9 @@ MediaMTX `BOARD_IP:8889` 完成 WebRTC HTTP 信令，媒体数据直接走板卡
 - RTSP URL 密码脱敏。
 - 不经过 shell 的 FFmpeg `argv` 参数构造。
 - FFmpeg `-progress pipe:1` 增量解析。
-- 配置检查与脱敏 dry-run 命令输出。
 - 每通道独立的 FFmpeg 工作进程创建、输出管道读取和退出回收。
 - 接收 `SIGINT`/`SIGTERM` 后先正常停止，超时再强制清理工作进程组。
 - 每通道独立的状态转换、启动/progress 超时、稳定窗口和有上限的退避重试。
-- 启动 FFmpeg 前执行 ffprobe 输入探测，并检查视频编码与硬件解码器是否匹配。
 - 多个启用通道并行运行，一个通道失败不会停止其他通道。
 - 支持通过 SIGHUP 重新读取配置，只新增、删除或重启发生变化的通道。
 - 提供本地 HTTP 健康检查、通道状态查询和启动/停止/重启控制。
@@ -101,19 +101,18 @@ Phase 5 已完成短时软硬件性能、分辨率、码率、重复固定样本
 
 ## 第一次应该看哪里
 
-不要从 1700 多行的测试记录开始。按你的目标选择入口：
+按你的目标选择入口：
 
 | 目标 | 从这里开始 |
 | --- | --- |
-| 第一次跑出 PC 摄像头画面 | [从零跑通与演示完整视频链路](docs/demo.md) |
+| 零基础跑出单路 PC 摄像头画面 | [单路摄像头用户手册](docs/user-manual.md) |
+| 快速熟悉项目并准备面试 | [项目介绍与面试速记](docs/interview-guide.md) |
 | 逐层理解源码 | [源码阅读与面试准备路线](docs/code-reading-guide.md) |
 | 前台测试通过后安装为 systemd 服务 | [systemd 部署指南](docs/deployment.md) |
 | 查看设计取舍和状态机 | [架构设计](ARCHITECTURE.md) |
-| 复现测试或查验收证据 | [测试与验收指南](docs/test-plan.md) |
 | 查看 CPU、RSS、吞吐和延迟数据 | [性能测试结果](docs/benchmark-results.md) |
 
-第一次运行只需要 `docs/demo.md`。`docs/test-plan.md` 和 `docs/development-status.md` 是
-开发证据，不是入门教程。
+第一次运行只需要 `docs/user-manual.md`。
 
 ## 演示重点
 
@@ -136,20 +135,19 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-## 配置检查与 dry-run
+## 配置检查
 
 示例配置通过环境变量注入源地址：
 
 ```bash
 export CAM01_RTSP_URL='rtsp://user:password@camera.example/live'
 ./build/gatewayd --config config/gateway.example.yaml --check-config
-./build/gatewayd --config config/gateway.example.yaml --dry-run
 ./build/gatewayd --config config/gateway.example.yaml
 ```
 
-dry-run 输出会隐藏 URL 密码。输出内容只用于诊断；程序会将参数数组直接交给
-`posix_spawnp()`，不会交给 shell 执行。不带检查选项时，当前版本会并行启动
-所有启用的通道；需要使用包含 Rockchip MPP/RGA 支持的 FFmpeg。
+`--check-config` 只加载并校验配置，不连接摄像头。不带检查选项时，当前版本会并行启动
+所有启用的通道，并将参数数组直接交给 `posix_spawnp()`，不会交给 shell 执行；运行环境
+需要使用包含 Rockchip MPP/RGA 支持的 FFmpeg。
 
 网关向 MediaMTX 发布时固定使用 RTSP/TCP，并将编码 GOP 设置为输出帧率的两倍，
 即默认约 2 秒一个关键帧，以限制新播放器等待关键帧的时间。实际播放延迟还会受到
@@ -206,12 +204,12 @@ ssh -N \
 监听地址、端口和启用状态的修改需要重启 `gatewayd`，不会通过 SIGHUP 生效。
 `gatewayd` 默认保持常驻，即使所有通道均已停止也可通过接口重新启动；仅批处理场景可
 使用 `--exit-when-idle` 让程序在全部通道结束后退出。启用通道超过 `max_retries` 后会显示
-`FAILED`，但默认守护模式不会放弃该通道：它按 `max_backoff_sec` 低频探测，输入恢复后自动
-经过 `PROBING`、`STARTING` 回到 `RUNNING`。只有一次性 `--exit-when-idle` 模式会在重试
+`FAILED`，但默认守护模式不会放弃该通道：它按 `max_backoff_sec` 低频重试，输入恢复后自动
+经过 `STARTING` 回到 `RUNNING`。只有一次性 `--exit-when-idle` 模式会在重试
 耗尽后结束。
 
 从 PC 摄像头推流、板卡编译和前台运行，到 RTSP/WebRTC 播放、HTTP 控制、录像和故障
-恢复的完整流程见 [从零跑通与演示完整视频链路](docs/demo.md)。
+恢复的完整流程见[单路摄像头用户手册](docs/user-manual.md)。
 
 ## MediaMTX 录像配置
 
@@ -256,8 +254,8 @@ sudo cmake --install build
 ```
 
 脚本会检查架构、MPP/RGA/DRM 设备权限、Rockchip 编解码器、RGA 滤镜和
-MediaMTX。完整设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，可重复执行的分阶段
-测试步骤和验收记录见 [docs/test-plan.md](docs/test-plan.md)。
+MediaMTX。完整设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，性能验收结果见
+[docs/benchmark-results.md](docs/benchmark-results.md)。
 
 ## 运行指标采样
 
@@ -293,7 +291,8 @@ FPS/丢帧配套采集方式和性能结果见
 `--mode` 可为 `software`、`mpp` 或 `mpp-rga`。脚本默认预热 2 秒、采样 10 秒，
 保存原始指标与汇总，并实际生成 3 秒输出做 ffprobe 和完整软件解码校验。
 它只接受本地固定文件，
-且不覆盖已有结果。开发者验收步骤见 [docs/test-plan.md](docs/test-plan.md)。
+且不覆盖已有结果。已经完成的板卡测试结果见
+[docs/benchmark-results.md](docs/benchmark-results.md)。
 
 使用同一固定样本进行多通道容量短测：
 

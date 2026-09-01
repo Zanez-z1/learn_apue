@@ -9,40 +9,6 @@
 #include <time.h>
 #include <unistd.h>
 
-static int is_probe_command(int argc, char **argv)
-{
-    int index;
-
-    for (index = 1; index < argc; ++index) {
-        if (strcmp(argv[index], "-show_entries") == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int run_probe_fixture(int argc, char **argv)
-{
-    const char *mode = getenv("GW_PROBE_FIXTURE_MODE");
-
-    if (mode != NULL && strcmp(mode, "timeout") == 0) {
-        for (;;) {
-            pause();
-        }
-    }
-    if (mode != NULL && strcmp(mode, "fail") == 0) {
-        fprintf(stderr, "fixture ffprobe failure input=%s\n", argv[argc - 1]);
-        return 6;
-    }
-    if (mode != NULL && strcmp(mode, "invalid") == 0) {
-        printf("codec_name=h264\nwidth=invalid\nheight=1080\n");
-        return 0;
-    }
-    printf("codec_name=%s\nwidth=1920\nheight=1080\n",
-           mode != NULL && strcmp(mode, "mismatch") == 0 ? "hevc" : "h264");
-    return 0;
-}
-
 static int claim_recovery_failure(const char *environment_name)
 {
     const char *marker_path = getenv(environment_name);
@@ -73,9 +39,6 @@ int main(int argc, char **argv)
         int publish_recovery_attempt = -2;
         int index;
 
-        if (is_probe_command(argc, argv)) {
-            return run_probe_fixture(argc, argv);
-        }
         for (index = 1; index + 1 < argc; ++index) {
             if (strcmp(argv[index], "-i") == 0) {
                 input_url = argv[index + 1];

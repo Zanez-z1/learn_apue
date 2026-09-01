@@ -182,7 +182,6 @@ Node、npm、Python 运行时或复杂前端框架引入板卡常驻路径。
 - 区分 H.264/H.265 解码器和编码器。
 - 选择是否启用 RGA 缩放与格式转换。
 - 拒绝不受支持的配置组合。
-- 提供 dry-run 模式，输出脱敏后的等价命令用于调试。
 
 #### Process Manager
 
@@ -298,28 +297,24 @@ DISABLED
    |
    | enable
    v
-STOPPED ---- start ----> PROBING ---- success ----> STARTING
-   ^                         |                         |
-   |                         | failure                 | progress received
-   |                         v                         v
-   +------ manual stop ---- BACKOFF <------------- RUNNING
-                              ^                       |
-                              |                       | process exit /
-                              +-----------------------+ progress timeout
+STOPPED ---- start ----> STARTING ---- progress received ----> RUNNING
+   ^                         |                                |
+   |                         | startup failure                | process exit /
+   |                         v                                | progress timeout
+   +------ manual stop ---- BACKOFF <-------------------------+
                               |
                               | retries exhausted
                               v
                             FAILED
                               |
                               | max_backoff_sec elapsed
-                              +---------------------> PROBING
+                              +---------------------> STARTING
 ```
 
 状态含义：
 
 - `DISABLED`：配置中明确禁用。
 - `STOPPED`：通道可用但当前未运行。
-- `PROBING`：正在探测输入和编解码信息。
 - `STARTING`：工作进程已创建，等待有效进度。
 - `RUNNING`：持续收到视频处理进度。
 - `BACKOFF`：发生可恢复错误，等待下一次重试。
@@ -327,8 +322,8 @@ STOPPED ---- start ----> PROBING ---- success ----> STARTING
   线程终态。
 
 默认退避时间建议为 1、2、4、8、16、30 秒。进入 `FAILED` 后继续以
-`max_backoff_sec`（默认 30 秒）探测，避免忙循环；输入恢复后执行
-`FAILED -> PROBING -> STARTING -> RUNNING`。稳定运行超过指定时间后清零连续失败计数，
+`max_backoff_sec`（默认 30 秒）重试，避免忙循环；输入恢复后执行
+`FAILED -> STARTING -> RUNNING`。稳定运行超过指定时间后清零连续失败计数，
 但保留累计重启数。显式 `--exit-when-idle` 是例外，它为一次性执行保留耗尽后退出语义。
 
 ## 8. 线程与事件模型
@@ -337,12 +332,12 @@ STOPPED ---- start ----> PROBING ---- success ----> STARTING
 
 - 主线程：初始化、配置加载，通过 `signalfd` 同步消费 SIGHUP/SIGINT/SIGTERM，并协调
   服务退出。
-- 每通道 supervisor 线程：监督 ffprobe/FFmpeg 进程及 stdout/stderr 管道。
+- 每通道 supervisor 线程：监督 FFmpeg 进程及 stdout/stderr 管道。
 - 指标采样线程：在 HTTP 路径之外周期读取各 FFmpeg 的 `/proc` 数据并发布小型快照。
 - HTTP 线程：处理本地控制和查询请求。
 
 进程控制信号在创建线程前统一屏蔽，因此不会在 supervisor 或 HTTP 线程执行异步信号
-处理器。创建 ffprobe/FFmpeg 时通过 `posix_spawn` 属性恢复空信号掩码和默认处理方式，
+处理器。创建 FFmpeg 时通过 `posix_spawn` 属性恢复空信号掩码和默认处理方式，
 保证子进程仍能收到正常停止信号。
 
 共享的通道快照注册表使用 POSIX 读写锁保护，耗时操作不能持有该读写锁。生命周期
@@ -379,7 +374,6 @@ mediamtx:
     playback_port: 9996
 
 defaults:
-  probe_timeout_sec: 10
   startup_timeout_sec: 15
   progress_timeout_sec: 10
   stable_run_sec: 60
@@ -410,9 +404,6 @@ RTSP 用户名和密码通过 systemd `EnvironmentFile` 注入，不提交到 Gi
 `gatewayd --print-mediamtx-config` 将已校验的录像字段和通道输出路径渲染为 MediaMTX
 配置。gatewayd 不启动或重载 MediaMTX；生成文件的部署与服务重载由管理员或 systemd
 完成。录像目录要求绝对安全路径，回放默认只监听回环地址。
-
-`probe_timeout_sec` 限制每次 ffprobe 输入探测的最长时间；探测成功后才会进入
-FFmpeg 启动阶段。
 
 `stable_run_sec` 表示通道持续稳定收到 progress 多久后，将连续失败次数清零；总重启
 次数不会因此清零。
@@ -512,7 +503,6 @@ rk3588-media-gateway/
 │   ├── channel/               # 状态机、supervisor、快照和多通道管理器
 │   ├── pipeline/              # FFmpeg argv 构造
 │   ├── process/               # 子进程创建、轮询、停止和回收
-│   ├── probe/                 # ffprobe 输入探测
 │   ├── monitor/               # progress、录像状态和 /proc 指标
 │   ├── api/                   # 本地 HTTP 状态与控制
 │   └── tools/                 # gateway-metrics CLI
@@ -670,7 +660,7 @@ rk3588-media-gateway/
 简历中可以使用的数据必须来自测试记录，不能提前填写未经验证的通道数、CPU 降幅、延迟或稳定运行时间。
 
 截至 2026-08-06，上述 1～7 项已有代码、测试和实板记录支撑，因此项目在技术证据上可以
-写入简历。但“技术完成”不等于“面试就绪”：项目所有者还应按 `docs/demo.md` 独立完成
+写入简历。但“技术完成”不等于“面试就绪”：项目所有者还应按 `docs/user-manual.md` 独立完成
 一次五分钟演示，按 `docs/code-reading-guide.md` 讲清启动、断流恢复、热重载和停止四条
 流程，并为公开仓库补充真实画面截图或短视频。在此之前，不应把无法解释的实现细节写成
 个人熟练掌握的能力。

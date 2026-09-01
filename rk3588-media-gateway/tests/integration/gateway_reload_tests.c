@@ -143,7 +143,7 @@ int main(int argc, char **argv)
     char config_path[] = "/tmp/gateway-reload-config-XXXXXX";
     char log_path[] = "/tmp/gateway-reload-log-XXXXXX";
     char log_buffer[131072];
-    char *child_arguments[8];
+    char *child_arguments[6];
     posix_spawn_file_actions_t actions;
     pid_t child = -1;
     int config_fd = -1;
@@ -168,11 +168,9 @@ int main(int argc, char **argv)
     child_arguments[0] = argv[1];
     child_arguments[1] = "--config";
     child_arguments[2] = config_path;
-    child_arguments[3] = "--ffprobe-binary";
+    child_arguments[3] = "--ffmpeg-binary";
     child_arguments[4] = argv[2];
-    child_arguments[5] = "--ffmpeg-binary";
-    child_arguments[6] = argv[2];
-    child_arguments[7] = NULL;
+    child_arguments[5] = NULL;
     result = posix_spawn_file_actions_init(&actions);
     if (result != 0) {
         fprintf(stderr, "cannot initialize spawn actions: %s\n", strerror(result));
@@ -266,11 +264,11 @@ int main(int argc, char **argv)
         strstr(log_buffer, "MediaMTX recording changes require") == NULL ||
         strstr(log_buffer, "Configuration reload rejected") == NULL ||
         occurrence_count(log_buffer,
-                         "channel=cam01 state=PROBING restart_count=0") != 1U ||
+                         "channel=cam01 state=STARTING restart_count=0") != 1U ||
         occurrence_count(log_buffer,
-                         "channel=cam02 state=PROBING restart_count=0") != 2U ||
+                         "channel=cam02 state=STARTING restart_count=0") != 2U ||
         occurrence_count(log_buffer,
-                         "channel=cam03 state=PROBING restart_count=0") != 1U ||
+                         "channel=cam03 state=STARTING restart_count=0") != 1U ||
         strstr(log_buffer, "reload-password") != NULL) {
         fprintf(stderr, "unexpected reload log:\n%s\n", log_buffer);
         goto cleanup;

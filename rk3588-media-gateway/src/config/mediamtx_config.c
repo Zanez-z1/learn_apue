@@ -1,6 +1,7 @@
 /* Deterministic MediaMTX YAML rendering without shell or template expansion. */
 
 #include "gateway/mediamtx_config.h"
+#include "gateway/error.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -12,14 +13,6 @@ typedef struct {
     size_t length;
     bool failed;
 } config_writer;
-
-static void set_error(gw_error *error, gw_status code, const char *message)
-{
-    if (error != NULL) {
-        error->code = code;
-        snprintf(error->message, sizeof(error->message), "%s", message);
-    }
-}
 
 static void append(config_writer *writer, const char *format, ...)
 {
@@ -50,7 +43,7 @@ gw_status gw_mediamtx_render_config(const gw_config *config, char *output,
     size_t index;
 
     if (config == NULL || output == NULL || capacity == 0U) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "configuration and output buffer are required");
         return GW_ERR_ARGUMENT;
     }
@@ -100,13 +93,10 @@ gw_status gw_mediamtx_render_config(const gw_config *config, char *output,
     }
     if (writer.failed) {
         output[0] = '\0';
-        set_error(error, GW_ERR_OVERFLOW,
+        gw_error_set(error, GW_ERR_OVERFLOW,
                   "MediaMTX configuration exceeds output capacity");
         return GW_ERR_OVERFLOW;
     }
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
+    gw_error_clear(error);
     return GW_OK;
 }

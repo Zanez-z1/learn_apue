@@ -1,19 +1,11 @@
 /* Read recording capacity with statvfs without scanning or modifying segments. */
 
 #include "gateway/recording_status.h"
+#include "gateway/error.h"
 
 #include <limits.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/statvfs.h>
-
-static void set_error(gw_error *error, gw_status code, const char *message)
-{
-    if (error != NULL) {
-        error->code = code;
-        snprintf(error->message, sizeof(error->message), "%s", message);
-    }
-}
 
 static bool multiply_u64(uint64_t first, uint64_t second, uint64_t *result)
 {
@@ -47,7 +39,7 @@ gw_status gw_recording_snapshot_read(const gw_recording_config *config,
     uint64_t fragment_size;
 
     if (config == NULL || snapshot == NULL) {
-        set_error(error, GW_ERR_ARGUMENT,
+        gw_error_set(error, GW_ERR_ARGUMENT,
                   "recording configuration and snapshot are required");
         return GW_ERR_ARGUMENT;
     }
@@ -57,22 +49,16 @@ gw_status gw_recording_snapshot_read(const gw_recording_config *config,
                                       : GW_RECORDING_DISABLED;
     if (!multiply_u64((uint64_t)config->min_free_mb, 1024U * 1024U,
                       &snapshot->min_free_bytes)) {
-        set_error(error, GW_ERR_OVERFLOW,
+        gw_error_set(error, GW_ERR_OVERFLOW,
                   "recording free-space threshold overflows");
         return GW_ERR_OVERFLOW;
     }
     if (!config->enabled) {
-        if (error != NULL) {
-            error->code = GW_OK;
-            error->message[0] = '\0';
-        }
+        gw_error_clear(error);
         return GW_OK;
     }
     if (statvfs(config->directory, &filesystem) != 0) {
-        if (error != NULL) {
-            error->code = GW_OK;
-            error->message[0] = '\0';
-        }
+        gw_error_clear(error);
         return GW_OK;
     }
     fragment_size = filesystem.f_frsize != 0U
@@ -82,7 +68,7 @@ gw_status gw_recording_snapshot_read(const gw_recording_config *config,
                       &snapshot->total_bytes) ||
         !multiply_u64(fragment_size, (uint64_t)filesystem.f_bavail,
                       &snapshot->available_bytes)) {
-        set_error(error, GW_ERR_OVERFLOW,
+        gw_error_set(error, GW_ERR_OVERFLOW,
                   "recording filesystem capacity overflows");
         return GW_ERR_OVERFLOW;
     }
@@ -90,9 +76,6 @@ gw_status gw_recording_snapshot_read(const gw_recording_config *config,
     snapshot->state = snapshot->available_bytes < snapshot->min_free_bytes
                           ? GW_RECORDING_LOW_SPACE
                           : GW_RECORDING_OK;
-    if (error != NULL) {
-        error->code = GW_OK;
-        error->message[0] = '\0';
-    }
+    gw_error_clear(error);
     return GW_OK;
 }

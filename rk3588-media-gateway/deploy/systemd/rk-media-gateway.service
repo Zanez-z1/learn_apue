@@ -1,0 +1,49 @@
+[Unit]
+Description=RK3588 Media Gateway
+Documentation=file:/usr/local/share/doc/rk-media-gateway/deployment.md
+Wants=network-online.target mediamtx.service
+After=network-online.target mediamtx.service
+
+[Service]
+Type=simple
+User=rk-media-gateway
+Group=rk-media-gateway
+SupplementaryGroups=video render
+EnvironmentFile=/etc/rk-media-gateway/gateway.env
+ExecStart=/usr/local/bin/gatewayd --config /etc/rk-media-gateway/gateway.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+KillMode=control-group
+SendSIGKILL=yes
+UMask=0027
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+DeviceAllow=/dev/mpp_service rw
+DeviceAllow=/dev/rga rw
+DeviceAllow=/dev/dma_heap/system rw
+DeviceAllow=/dev/dma_heap/system-dma32 rw
+DeviceAllow=/dev/dma_heap/system-uncached rw
+DeviceAllow=/dev/dma_heap/system-uncached-dma32 rw
+DeviceAllow=/dev/dma_heap/cma rw
+DeviceAllow=/dev/dma_heap/cma-uncached rw
+DeviceAllow=/dev/dri/card0 rw
+DeviceAllow=/dev/dri/renderD128 rw
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/rk-media-gateway
+
+[Install]
+WantedBy=multi-user.target

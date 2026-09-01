@@ -1,0 +1,811 @@
+# 开发状态与上下文恢复记录
+
+本文档是开发者恢复项目上下文的首要入口。每完成一个可独立验证的功能增量，都必须
+在提交代码前更新本文件和 `docs/test-plan.md`，不能只在对话中记录进度。
+
+## 1. 固定开发方法
+
+每个增量严格按以下顺序进行：
+
+1. 从本文档确认当前阶段、约束和下一项任务。
+2. 实现一个职责明确、可以独立测试的最小增量。
+3. 增加或更新自动化测试。
+4. 更新 `docs/test-plan.md` 中的测试步骤、预期结果和实际记录。
+5. 更新本文档中的完成项、遗留项和下一步。
+6. 运行常规测试；涉及内存、进程或缓冲区时同时运行 Sanitizer。
+7. 执行 `git diff --check`，确认没有显式 `(void)函数调用` 写法。
+8. 创建只包含该增量的独立 Git 提交。
+9. 确认 Git 工作区干净后再开始下一个增量。
+
+如果对话被自动 compact 或由新的开发会话接手，先读取：
+
+```text
+docs/development-status.md
+docs/test-plan.md
+ARCHITECTURE.md
+git log --oneline --decorate -10
+git status --short --branch
+```
+
+## 2. 固定技术约定
+
+- 实现语言：C17。
+- 构建系统：CMake。
+- YAML 库：libyaml。
+- 进程创建：`posix_spawnp()`，禁止通过 shell 拼接配置参数。
+- 每个媒体通道使用独立 FFmpeg 进程组。
+- stdout 只解析 FFmpeg `-progress` 结构化输出。
+- stderr 必须在输出前隐藏 URL 密码。
+- HTTP API 默认只允许监听回环地址。
+- 不使用 `(void)printf(...)`、`(void)memcpy(...)` 等显式丢弃返回值写法。
+  `function(void)` 表示 C 函数无参数，不属于这一限制。
+- `README.md` 面向使用者；详细开发测试只写入 `docs/`。
+- 未在 RK3588 实机验证的数据不得写成已完成结果。
+
+## 3. 当前阶段
+
+当前阶段：五分钟单路真实摄像头演示闭环，状态为 `COMPLETE`。开发机实现、动态门禁、
+RK3588 部署、长期 FAILED 后无人值守恢复、真实浏览器 WebRTC+OSD 和重复断流恢复均已
+完成。双真实输入保持 `PENDING`；本轮不执行 30 分钟及更长长稳，音频仍是排除范围。
+
+当前开发机测试基线：
+
+```text
+日期：2026-08-07
+平台：x86_64 Arch Linux
+编译器：GCC 16.1.1
+常规 Debug CTest：33/33 PASS
+Release CTest：33/33 PASS
+ASan/UBSan：33/33 PASS
+TSan（适用的指标/录像/HTTP/通道管理器/重载/故障恢复测试）：8/8 PASS
+GCC -fanalyzer：构建完成；修复 1 个测试夹具关闭缺口，剩余 6 条跨函数告警已人工复核
+LeakSanitizer：当前 ptrace 环境不支持，尚未完成
+RK3588 MPP/RGA：开发机不具备；已在下述目标板卡单独验收
+```
+
+当前 RK3588 基线：
+
+```text
+日期：2026-08-06
+平台：LubanCat aarch64，Debian 11，Linux 5.10.160
+源码：板卡无 .git；已部署并验证低延迟运行时代码，最终纯文档变更未重复同步
+CMake：3.31.10
+FFmpeg-Rockchip：388741a，rkmpp/rkrga 检查 PASS
+MediaMTX：v1.20.0 linux arm64
+设备访问：MPP、RGA、DRM PASS
+环境检查：0 failures，0 warnings
+板卡完整 CTest：31/31 PASS
+Phase 0、1、2、4：按当前单路和 5 分钟以上实机范围 PASS
+Phase 3：开发机双通道与实板单路故障恢复 PASS；双真实输入板卡验收未执行
+实时 OSD：部署、真实画面、在线指标、长期离线恢复和重复断流恢复 PASS
+限制：无音频；未执行 30 分钟长稳
+```
+
+## 4. 已完成增量
+
+### 530a338：C17 单通道基础基线
+
+- YAML 配置加载、环境变量展开与校验。
+- URL 密码脱敏。
+- FFmpeg 参数数组构造。
+- progress 增量解析。
+- 单工作进程创建、双管道、停止与回收。
+
+### 543a925：状态机、超时与退避重试
+
+- `STOPPED`、`PROBING`、`STARTING`、`RUNNING`、`BACKOFF`、`FAILED`。
+- 启动超时和 progress 停滞超时。
+- 有上限的指数退避、最大重试次数和总重启计数。
+- 正常退出、超时、重试耗尽和密码脱敏端到端测试。
+
+### eac43d1：模块契约与不变量注释
+
+- 记录公共接口职责、资源所有权、管道行为和状态机约束。
+
+### f305c16：稳定运行窗口
+
+- 新增 `stable_run_sec` 配置，默认 60 秒。
+- 达到稳定窗口后清零连续失败次数，保留总重启次数。
+- 增加持续 progress 端到端测试。
+
+### 6373881：ffprobe 参数与结果解析
+
+- 使用独立参数数组构造 ffprobe 命令，不经过 shell。
+- 固定读取首个视频流的 `codec_name`、`width` 和 `height`。
+- 支持 LF 与 CRLF 输出，拒绝缺失或非法字段。
+- 校验 H.264/H.265 探测结果与配置的 RKMpp 解码器是否匹配。
+
+### 4034726：真实输入探测执行链路
+
+- supervisor 在每次启动或重试 FFmpeg 前执行独立 ffprobe 子进程。
+- 新增 `probe_timeout_sec`，与 FFmpeg 的 `startup_timeout_sec` 分开计时。
+- 限制并解析探测 stdout，探测 stderr 与工作进程日志使用相同的 URL 密码脱敏。
+- 区分 `probe_failure`、`probe_timeout`、`probe_mismatch` 和工作进程失败。
+- 探测失败使用现有退避及最大重试预算；探测成功后才从 `PROBING` 进入
+  `STARTING`。
+- 假 ffprobe 端到端覆盖成功、失败、超时、编码不匹配和重试耗尽。
+
+### 997c096：独立 supervisor 模块
+
+- 将探测、工作进程监督、progress 处理、超时、退避和重试从 `main.c` 迁入
+  `src/channel/supervisor.c`。
+- 新增 `include/gateway/supervisor.h`，由 CLI 注入 ffprobe/FFmpeg 路径和只读停止
+  信号；supervisor 不再安装或拥有进程级信号处理器。
+- `main.c` 只负责参数解析、配置加载、dry-run、单通道选择和发布停止信号。
+- 新增 supervisor 公共接口测试，覆盖默认选项、非法参数和探测阶段停止/回收。
+- 原有 13 项端到端与模块测试保持行为不变，当前总计 14 项。
+
+### 773290c：单通道状态快照
+
+- 新增 `gw_channel_snapshot`，保存通道状态、最近事件、活动进程类型/PID、退出码、
+  探测信息、最近 progress、连续失败数、退避和总重启数。
+- supervisor 在探测、启动、progress、稳定、失败、退避和停止等关键点同步发布
+  只读快照。
+- 观察者回调只在 supervisor 线程内同步调用；未来多通道管理器负责复制并加锁保存，
+  当前没有宣称具备线程安全的 HTTP 查询能力。
+- 新增纯快照单元测试，并扩展 supervisor 测试验证
+  `PROBING -> STARTING -> RUNNING -> STOPPED` 和最终指标。
+
+### 4f66f7f：多通道管理器
+
+- 新增 POSIX 线程多通道管理器，每个启用通道拥有独立 supervisor 线程。
+- 使用读写锁保存每个通道的最新快照，查询时复制数据，不暴露 supervisor 临时内存。
+- 使用原子停止状态协调管理器内部停止，并继续响应 CLI 发布的 SIGINT/SIGTERM。
+- `gatewayd` 不再限制只能启用一个通道，会并行启动配置中的所有启用通道。
+- 双通道测试覆盖全部成功、统一停止，以及一个通道工作进程失败而另一个正常完成。
+- 多通道管理器和 CLI 测试通过 ThreadSanitizer；尚未进行 RK3588 多路性能测试。
+
+### a5542c7：SIGHUP 差异化配置重载
+
+- 主线程接收 SIGHUP 后重新读取同一 YAML 路径，候选配置完整解析和校验通过前不修改
+  任何运行通道。
+- 管理器按通道 ID 比较配置；未变化通道保持原线程和配置代次，变化通道停止后重启，
+  并支持新增、禁用或删除通道。
+- MediaMTX 发布地址或重试默认值变化时重启所有受其影响的通道；仅 server 字段变化
+  不重启媒体工作进程。
+- 每个通道使用独立原子停止源，配置代次按通道而非槽位递增。
+- SIGINT/SIGTERM 只由主线程读取信号标志，再通过原子状态广播，消除工作线程直接读取
+  `sig_atomic_t` 造成的数据竞争。
+- CLI 测试覆盖合法重载、非法候选回滚、未变通道不中断和最终统一停止。
+
+### e2f7e01：输入断开后自动恢复
+
+- 为假 FFmpeg 增加确定性一次性断流模式：同一输入第一次启动在进入 `RUNNING` 后
+  非零退出，退避后的第二次启动保持运行，用独占创建临时标记文件协调两个进程。
+- 新增独立 `gateway_input_recovery_tests`，双通道运行时验证故障通道经历
+  `worker_failure -> BACKOFF -> PROBING -> RUNNING`，总重启数为 1。
+- 同一测试验证健康通道保持 `RUNNING`、总重启数为 0、配置代次不变，并继续检查日志
+  密码脱敏。
+- 测试使用原子观察标志记录并发回调事件，并通过 ThreadSanitizer 验证。
+- 这是开发机故障注入，不代表真实 RTSP 恢复或重新发布到 MediaMTX 已通过。
+
+### 3815eab：输出发布失败后自动恢复
+
+- 将恢复夹具扩展为输入和发布两种模式；发布模式只根据 FFmpeg 输出 URL 触发首次
+  非零退出，不改变输入探测结果。
+- 新增 `gateway_publish_recovery_tests`，验证发布工作进程失败后通道独立退避、重新
+  探测并恢复到 `RUNNING`，健康通道不重启。
+- 输入和发布两个场景共用相同的生命周期断言，并分别使用独立临时标记文件，避免
+  测试间共享状态。
+- 该测试未连接 MediaMTX，只证明 gateway 对“FFmpeg 因发布端故障退出”的恢复路径；
+  真实 RTSP 发布和 MediaMTX 停止/启动仍属于实机验收。
+
+### f30682d：Phase 3 开发机审计与实机清单
+
+- Phase 3 的开发机软件路径已覆盖多通道隔离、有限退避、工作进程失败、输入/发布
+  故障恢复和差异化重载，测试证据逐项记录在 `docs/test-plan.md`。
+- 完整 Phase 3 仍为 `IN PROGRESS`，因为当前环境没有 RK3588、真实 RTSP 源或
+  MediaMTX，未将夹具结果替代为实机结果。
+- `docs/test-plan.md` 已增加可执行的板卡验收清单和记录模板，包含基线播放、输入断流、
+  工作进程崩溃、MediaMTX 停启、SIGHUP、密码脱敏和资源清理。
+
+### bb0c0a9：只读 HTTP 服务
+
+- 新增独立 `src/api/http_server.c` 模块，提供有界 HTTP/1.0/1.1 请求读取、JSON
+  序列化和回环 socket 服务。
+- 提供 `GET /v1/health`、`GET /v1/channels` 和
+  `GET /v1/channels/{id}`，通道快照在管理器读锁下批量复制。
+- JSON 只暴露状态、进程、探测和 progress 指标，不包含输入 URL；字符串统一转义，
+  非有限浮点数输出为 `null`。
+- 非 GET 返回 405，未知资源返回 404，超过 8192 字节的请求头返回 431；响应包含
+  `nosniff` 和 `Connection: close`。
+- 新增 `server.enabled`；默认启用并监听 `127.0.0.1`，测试夹具可显式关闭。监听地址
+  只接受数值 IPv4/IPv6，监听配置变化通过 SIGHUP 明确拒绝并要求进程重启。
+- 单元测试覆盖路由、列表容量和敏感信息边界；CLI 端到端测试覆盖真实回环连接、三类
+  查询、404、405、431、SIGTERM 和密码脱敏。
+
+### 25f658f：HTTP 通道生命周期控制
+
+- 新增 `POST /v1/channels/{id}/start`、`stop` 和 `restart`；成功返回 202，未知通道
+  返回 404，重复启动、重复停止或管理器退出期间的命令返回 409。
+- 通道管理器使用生命周期互斥锁串行化 HTTP 控制与 SIGHUP 差异化重载；每个槽位增加
+  原子线程运行标志，避免刚启动但快照尚未更新时把可回收线程与活动线程混淆。
+- 网关默认作为常驻服务运行，全部通道停止或失败后仍能接受恢复命令；新增
+  `--exit-when-idle` 保留批处理测试和一次性运行的退出方式。
+- 管理器测试覆盖停止、启动、重启、未知通道、非法状态，以及两个线程同时启动同一
+  通道时恰好一个成功。真实 HTTP 端到端测试覆盖状态轮询、PID 更换、404/405/409、
+  SIGTERM 和敏感信息边界。
+- HTTP 当前没有身份认证；默认回环监听是安全边界，不得直接暴露到不受信任网络。
+
+### 1e4d881：MediaMTX 录像配置生成
+
+- `mediamtx.recording` 新增录像启用、绝对目录、fMP4/MPEG-TS 格式、part 大小与周期、
+  segment 周期、自动删除周期、最低空闲空间阈值和回放监听配置。
+- 配置校验限制绝对目录字符、数值范围、回放数值 IP、端口和重复 MediaMTX 输出路径。
+- `gatewayd --print-mediamtx-config` 生成每通道 MediaMTX `paths` 配置；启用通道录像，
+  禁用通道保留路径但关闭录像，并开启仅回环 playback 服务。
+- 生成器不复制输入 URL，因此不会把 RTSP 密码写入 MediaMTX 文件；容量不足和非法配置
+  明确失败。提供与当前 MediaMTX v1.20 配置字段一致的示例文件。
+- MediaMTX 仍是独立服务，gatewayd 不创建、重载或伪造其运行结果。录像参数变化需要
+  重新生成配置并由部署流程重载 MediaMTX。
+
+### 0396124：录像磁盘状态管理
+
+- 新增纯 `statvfs()` 录像状态模块，按当前服务用户可用块计算总容量与可用容量，不扫描
+  录像文件，也不接触 MediaMTX 正在写入的分段。
+- 新增 `GET /v1/recording`，返回启用状态、`disabled`/`ok`/`low_space`/
+  `unavailable`、容量和最低空闲阈值；不暴露服务器目录路径。
+- 录像启用且空间低于 `min_free_mb`，或录像目录不可访问时，`GET /v1/health` 返回
+  `degraded` 并给出录像状态；通道实时转码不会因此被停止。
+- 空间回收由已生成的 MediaMTX `recordDeleteAfter` 策略负责。gatewayd 不直接删除录像
+  文件，避免与 MediaMTX 写入竞争或产生路径穿越风险。
+- 单元测试覆盖关闭、正常、低空间、目录不可用和参数错误；HTTP 单元与真实回环测试
+  覆盖 JSON、健康降级、GET-only、目录隐藏和密码边界。
+
+### 3cd9ffe：systemd 服务化与优雅退出
+
+- 新增 gatewayd 与独立 MediaMTX 的 systemd 单元；使用同一非 root 服务账号共享录像
+  目录，MediaMTX 仍不是 gatewayd 子进程。
+- gatewayd 单元通过 EnvironmentFile 注入凭据，支持 `systemctl reload` 转换为 SIGHUP，
+  异常退出按 `Restart=on-failure` 恢复，正常停止使用 SIGTERM。
+- 两个服务均配置 control-group 清理、停止超时、写目录白名单、NoNewPrivileges、严格
+  文件系统保护和多项内核/权限加固。
+- tmpfiles 规则创建配置、状态与录像目录；CMake 安装规则包含二进制、示例配置、服务
+  单元、环境示例和部署文档。
+- 部署静态测试检查关键退出、重启、权限和路径配置；HTTP 端到端增强为 SIGTERM 后同时
+  验证 gatewayd 正常退出、最终 FFmpeg PID 消失且 HTTP 监听关闭。
+- TSan 在增强测试中发现异步处理器可能落到任意工作线程。现改为主线程通过 Linux
+  `signalfd` 同步消费 SIGHUP/SIGINT/SIGTERM，所有工作线程继承屏蔽掩码；
+  `posix_spawn` 明确为 ffprobe/FFmpeg 恢复空掩码与默认信号动作，保留优雅停止能力。
+- 开发机没有以 PID 1 运行测试单元。`systemd-analyze verify` 已解析单元，仅因开发机
+  `/usr/local/bin` 尚未安装目标二进制而返回缺失命令；真实 enable/start/restart 仍必须
+  在板卡执行，未伪造为通过。
+
+### 本次增量：Phase 4 开发机收尾审计
+
+- 依次执行完整常规 CTest、ASan/UBSan 和适用的 TSan，最终分别为 26/26、26/26 和
+  5/5 PASS；LeakSanitizer 因当前 ptrace 环境关闭，未写成已通过。
+- 三套测试首次并行执行时，常规套件的 1 秒 progress 超时因 CPU 饥饿出现一次失败；
+  单独重跑完整常规套件 26/26 PASS。最终验收固定为依次执行，避免测试程序互相争用。
+- GCC `-fanalyzer` 完成全量构建。剩余 9 条告警均已对照控制流复核：HTTP 客户端由
+  `run_server()` 关闭、监听描述符由 stop/destroy 关闭、管道失败路径逐项关闭；另两条
+  来自已初始化的两字节单字符缓冲区。常规与 Sanitizer 测试未发现对应资源泄漏或
+  未初始化读取，未以“静态分析零告警”表述结果。
+- `git diff --check` 通过；源码未发现显式 `(void)函数调用`、`system()`/`popen()`，受管
+  源码和部署文件中未发现带内嵌凭据的 URL。夹具密码只存在于测试输入并持续验证脱敏。
+- README、开发状态、测试计划和部署文档的职责与边界已复核。开发机软件路径完成不代表
+  真实 MediaMTX 录像、RK3588 硬件转码或 systemd 生命周期已经通过。
+
+### f672c7d：Phase 0 RK3588 环境基线
+
+- 通过 SSH 复用连接核验目标为 `cat@192.168.1.45`、aarch64，并在任何板卡操作前确认
+  `/home/cat/rk3588-media-gateway`；板卡目录不是 Git 仓库，因此使用关键源文件 SHA-256
+  与本机 `10e3432` 对照，结果一致。
+- 项目环境检查在 Debian 11 / Linux 5.10.160 上为 0 failures、0 warnings；`cat` 用户可
+  访问 MPP、RGA 和至少一个 DRM 节点，FFmpeg-Rockchip 提供 h264/hevc RKMpp 编解码器
+  和 `scale_rkrga`，MediaMTX 版本为 v1.20.0。
+- 使用板卡用户级 CMake 3.31.10 重新配置并构建 Release，随后完整 CTest 26/26 PASS，
+  总用时 24.28 秒。日志保存在板卡仓库外的
+  `/home/cat/rk3588-acceptance/2026-08-06/`。
+- 板卡 systemd 的 `degraded` 来自项目外 `rkwifibt.service`，没有误写成 gateway 故障；
+  Phase 0 只标记环境基线通过，不替代真实 RTSP、录像或服务生命周期验收。
+
+### 531f3a2：真实 PC 摄像头 RK3588 媒体冒烟
+
+- PC 集成摄像头原生上限为 MJPEG 1280×720@30fps；PC FFmpeg 实时上采样并编码为
+  H.264 1920×1080@25fps，通过 PC 临时 MediaMTX 向板卡提供真实网络 RTSP 输入。
+  记录中没有把上采样流描述成摄像头原生 1080p。
+- gatewayd 在 RK3588 上探测到 H.264 1920×1080，实际启动 `h264_rkmpp` 解码、
+  `scale_rkrga` 和 `h264_rkmpp` 编码并发布到板卡 MediaMTX。至少连续运行 10 分 44 秒，
+  最终为 25.04fps、speed 1.00、0 丢帧、0 重启。
+- PC FFmpeg 通过局域网实际读取板卡 RTSP 输出；MediaMTX 记录 WebRTC peer connection
+  established 和读取 `cam01`，用户在 PC 浏览器确认能够看到实时摄像头画面，主观延迟
+  约 1～2 秒。
+- 当前媒体链路显式使用 `-an`，没有音轨，MediaMTX 录像也只能得到视频。音频采集、
+  透传或编码属于后续独立功能，不在本轮实机验收中伪装为已支持。
+- 一次发布 `SETUP` 先返回 461，随后成功发布且稳定运行；该兼容性现象保留待后续明确
+  输出 RTSP 传输方式。原 Phase 1 的 30 分钟标准尚未执行，当前只标记 5 分钟冒烟通过。
+
+### ca25dd1：RK3588 HTTP 生命周期控制验收
+
+- 在 PC 真实摄像头、跨主机 RTSP、RK3588 RKMpp/RGA 和板卡 MediaMTX 均在线的实际
+  链路上验证健康、通道列表、单通道与录像状态查询，四个接口均返回 HTTP 200。
+- stop 返回 202 后通道进入 `STOPPED`，原工作进程 PID 628358 消失且板卡 RTSP 输出
+  不可读；重复 stop 返回 409。start 返回 202，紧接的重复 start 返回 409，新 PID 为
+  676117，H.264 1920×1080@25 输出恢复。
+- restart 返回 202，工作进程再次更换为 PID 677115；板卡 ffprobe 与 PC 跨主机读取均
+  确认输出恢复。未知通道返回 404，GET 控制动作返回 405，最终健康状态为 ok。
+- 验收日志未出现输入 URL，保存在板卡仓库外
+  `/home/cat/rk3588-acceptance/2026-08-06/phase4-http-control.log`。开发机并发单元测试的
+  锁竞争覆盖仍作为并发证明，板卡测试补充真实进程和真实媒体恢复证据。
+
+### 本次增量：RK3588 MediaMTX 录像与磁盘状态验收
+
+- 在板卡使用真实 `gatewayd --print-mediamtx-config` 生成录像配置，MediaMTX v1.20.0
+  将 PC 摄像头转码输出录制到板卡本地
+  `/home/cat/rk3588-acceptance/recordings`；录像不是存放在 PC。
+- 使用 1 秒 part、5 秒 segment 和 15 秒 delete-after 进行可观察验收。MediaMTX 持续
+  生成非空 fMP4 分段；回放服务列出实际时间段，下载的 5 秒 MP4 为 3,747,338 bytes，
+  ffprobe 确认为 H.264 1920×1080@25fps。
+- 记录一个具体最旧分段后等待 20 秒，该文件由 MediaMTX 自动删除且新分段继续生成；
+  gatewayd 没有主动删除文件，也没有与 recorder 竞争。
+- 正常阈值下录像状态与健康状态均为 ok。将 `min_free_mb` 临时提高到 40000，仅通过
+  比较模拟低空间，不写入填充文件；录像状态变为 low_space、健康状态 degraded，实时
+  通道仍为 RUNNING。恢复 1 MiB 阈值后两个状态回到 ok。
+- 当前录像只有 H.264 视频轨，音频因 pipeline 的 `-an` 未进入发布流。真实证据保存在
+  板卡仓库外；该录像增量完成时仍待故障恢复和 systemd 验收，后续增量已经补齐。
+
+### 25e1a3f / d4a8b77：常驻工作进程零退出恢复修复
+
+- 在真实 PC 摄像头断流验收中，FFmpeg 读取上游 EOF 后以退出码 0 结束；旧逻辑把它记为
+  `clean_exit` 并将通道停在 `STOPPED`，因此没有执行既定的退避和重新探测。这是实机发现
+  的恢复缺陷，不能写成断流验收通过。
+- 常驻模式现将所有未经 stop 请求的工作进程退出都归入 `worker_failure`，即使退出码为
+  0 也会消耗重试预算并进入 `BACKOFF`。显式 `--exit-when-idle` 模式仍允许测试夹具以 0
+  完成，保留一次性端到端测试语义。
+- supervisor 单元测试新增退出码 0 的失败终态断言；原 clean-exit、通道管理、输入恢复和
+  发布恢复测试继续通过。HTTP 端到端测试还会在端口启动失败时打印 gateway 子进程日志，
+  便于区分应用错误和执行环境限制。
+- 本增量完整常规 CTest 26/26、ASan/UBSan 26/26、适用 TSan 7/7 PASS。TSan HTTP 首次
+  在受限沙箱中因禁止绑定回环临时端口失败，取得明确 `Operation not permitted` 日志后在
+  允许回环监听的同机环境复跑通过；没有把沙箱失败算作功能通过。
+- 修复源码已同步到板卡并完成 Release 重建；板卡完整 CTest 26/26 PASS。真实断流复测结果
+  记录在下一增量，不以开发机测试替代实机结果。
+- 修复首次在板卡 GCC 上构建时，编译器对受 `received_progress` 短路保护的
+  `running_since` 给出可能未初始化警告；显式零初始化消除该跨编译器告警，不改变稳定窗口
+  语义。板卡用户级 CTest 在修复源码上为 26/26 PASS。
+
+### 本次增量：RK3588 故障恢复验收
+
+- 修复后二次停止 PC 摄像头推流，板卡 FFmpeg 在上游 EOF 后仍以 0 退出，但通道正确记录
+  `worker_failure -> BACKOFF`；输入离线期间探测失败，退避按 1、2、4、8、16、30 秒封顶。
+  恢复 PC 摄像头后重新探测成功，新工作 PID 762652 回到 `RUNNING`；60 秒稳定窗口后连续
+  失败计数从 7 清零，累计重启数保留。
+- 精确向 PID 762652 发送 SIGKILL 后，通道记录退出码 137 和 1 秒退避，经探测后以新 PID
+  767868 恢复 `RUNNING`。没有使用宽泛的 `pkill`，gatewayd 与 MediaMTX 未被误停。
+- 精确停止 MediaMTX PID 692980 后，gatewayd 保持运行且没有代为启动 MediaMTX；FFmpeg
+  因 broken pipe 以 224 退出，并在 MediaMTX 离线期间持续有限退避。使用同一录像配置恢复
+  MediaMTX 为 PID 770462 后，gatewayd 以新工作 PID 770861 重新发布。
+- 恢复后板卡本地探测为 H.264 1920×1080@25，PC 跨主机探测的平均帧率为 25fps；录像目录
+  继续生成非空 MP4，回放 API 返回新的时间段。MediaMTX 日志还记录来自 PC 的 WebRTC 会话
+  重新建立并读取单路 H.264。
+- 原始证据位于板卡仓库外的 `phase3-fault-recovery.log`、
+  `phase3-input-disconnect-fixed.log`、`phase3-input-recovery-fixed.log`、
+  `phase3-worker-crash-recovery.log` 和 `phase3-mediamtx-stop-recovery.log`。该增量之后执行的
+  systemd 非 root 服务生命周期验收见后续记录。
+
+### 244f5b9：systemd 实机权限与 MediaMTX v1.20 兼容修复
+
+- 首次 systemd 启动没有伪装为通过：MediaMTX 因 v1.20 默认启用 MoQ、尝试在只读工作目录
+  生成 `auto.crt` 而反复退出；gatewayd 服务账号虽属于 `video,render`，但
+  `ProtectClock=yes` 间接启用封闭设备策略，RKMPP 无法取得 allocator。
+- MediaMTX 生成器现显式关闭未使用的 RTMP、HLS、SRT 和 MoQ，仅保留 TCP RTSP、WebRTC
+  与按需 playback；RTSP 发布监听限制到回环地址。测试固定这些字段，避免后续 MediaMTX
+  版本新增协议默认开启。
+- gatewayd 单元保留 `ProtectClock=yes`，并以 `DeviceAllow` 最小放行 MPP、RGA、板卡现有
+  DMA heap、DRM card0 与 renderD128。临时 systemd 单元已证明单独启用 ProtectClock 会
+  复现失败，加入精确设备白名单后同一非 root 账号完成 3 秒硬件解码、RGA 与编码。
+- 下一步在开发机完成常规和 sanitizer 回归，重新安装单元与配置后再进行正式 systemd
+  启停、异常恢复和开机启动验收。
+
+### 54f5e91：HTTP 描述符跨 exec 泄漏修复
+
+- systemd 监听审计发现 FFmpeg 持有 gatewayd 的 9080 监听 socket。原因是 HTTP listener
+  和 accept socket 创建时未原子设置 close-on-exec，后续通道重启的 posix_spawn 会继承
+  当时打开的网络描述符。
+- listener 改用 `SOCK_CLOEXEC` 创建，客户端改用 `accept4(..., SOCK_CLOEXEC)`，避免多线程
+  环境中先 accept 再 fcntl 的竞态窗口。
+- HTTP 端到端测试在 HTTP 已监听后执行通道 restart，并扫描最终假 FFmpeg 的 `/proc/PID/fd`；
+  工作进程若继承任何 socket 会直接失败。下一步完成三套回归并再次部署板卡。
+- 修复后完整常规 CTest 26/26、ASan/UBSan 26/26 和适用 TSan 7/7 PASS；下一步同步板卡
+  并用真实 FFmpeg `/proc/PID/fd` 复核 9080 socket 不再被继承。
+
+### 94d7e47：RK3588 systemd 生命周期验收
+
+- CMake 正式安装后创建无登录 `rk-media-gateway` 账号，UID/GID 997，补充组为 video(44)
+  与 render(107)。配置目录 0750、YAML 0640、root 环境文件 0600、录像目录 0750；两个
+  服务进程和 FFmpeg 均以 UID/GID 997 运行，没有改成 root。
+- 修复后的 MediaMTX 与 gatewayd 单元均 enabled/active。监听审计确认 gateway HTTP 9080、
+  RTSP 8554、playback 9996 只在回环地址；外部仅保留验收所需 WebRTC 8889/8189，未监听
+  RTMP、HLS、SRT 或 MoQ 端口。
+- 板卡重新构建后完整 CTest 26/26 PASS。真实 FFmpeg FD 包含自身 RTSP socket、MPP、RGA、
+  DMA heap 和 dmabuf，但不包含 gatewayd 的 9080 listener inode，close-on-exec 修复通过。
+- `systemctl stop` 使 gatewayd 以 ExecMainStatus=0 退出，旧 gateway/FFmpeg PID 均消失，
+  MediaMTX 保持运行；再次 start 后以新 PID 恢复真实硬件通道。
+- 精确 SIGKILL gatewayd 后，systemd 的 NRestarts 变为 1，旧 control group 工作进程被清理，
+  新 gatewayd/FFmpeg 回到 `RUNNING`。精确 SIGKILL MediaMTX 后其 NRestarts 也变为 1，
+  gatewayd 主 PID 不变，工作进程经历 broken pipe 和退避后重新发布。
+- 故障恢复后 RTSP 为 H.264 1920×1080、平均 25fps，WebRTC 从 PC 自动重连，playback 返回
+  新时间段且 `/var/lib/rk-media-gateway/recordings` 继续生成非空 MP4。原始证据保存在板卡
+  仓库外的 `phase4-systemd-lifecycle.log` 和 `phase4-systemd-journal.log`。
+- 该提交先记录停启和崩溃恢复；后续整机重启与缩短后的最终稳定窗口记录见下一增量。
+
+### Phase 4 最终重启与五分钟稳定验收
+
+- 整机重启前 boot ID 为 `761393ed-c372-439d-b7a8-afa94292ec7c`，重启后为
+  `7ecb42c7-e1e2-45b6-b0b6-f8cfd51ef9a6`。两个已启用服务在新系统启动约 4 秒后自动
+  进入 active；启动初期网络未就绪时通道按 1/2/4/8 秒退避，网络恢复后自动进入 RUNNING。
+- 重启后的最终连续稳定窗口为 6 分 12 秒，超过用户要求的 5 分钟：H.264
+  1920×1080@25，frame=9423，fps=25.19，speed=1.01，drop=0。gatewayd、MediaMTX 和
+  FFmpeg 各 1 个实例，父子关系正确，僵尸进程为 0。
+- 最终样本中 MediaMTX/gatewayd/FFmpeg 的 CPU 分别约 15.2%/0.1%/15.7%，RSS 分别约
+  55.1/2.2/20.8 MiB，温度约 41.6°C；这些是单点验收数据，不替代 Phase 5 性能报告。
+- 最小监听、配置权限、无凭据 URL、录像容量状态、RTSP 输出和 unit 静态验证均通过；
+  `systemd-analyze security` 对两个服务均给出 6.5 MEDIUM，作为后续加固基线而非零风险声明。
+- 重启后浏览器慢读曾触发 WebRTC 丢帧告警，录像器曾因绝对时间漂移重置一次；12:48 后
+  未再出现应用告警，录像和媒体输出持续正常。这与用户观察到约 1～2 秒延迟一致，尚未做
+  低延迟专项优化。
+- 用户明确取消本轮 30 分钟测试，因此 30 分钟长稳记录为 `SKIPPED`，没有伪造为 PASS；
+  Phase 4 按 5 分钟以上的修订验收范围完成。证据位于板卡仓库外的
+  `phase4-systemd-boot*.log` 和 `phase4-five-minute-final.log`。
+- 文档收尾后的最终顺序回归为常规 26/26、ASan/UBSan 26/26、适用 TSan 7/7 PASS。
+  ASan 首次在受限沙箱运行时只有 HTTP 测试因回环 bind 被拒绝而失败；允许回环后完整
+  复跑通过，错误证据为 `Operation not permitted`，未把该环境失败算成功能失败或通过。
+- 验收结束后优雅停止板卡两个服务，均保持 enabled、状态为 inactive 且 ExecMainStatus=0；
+  板卡 gatewayd/FFmpeg/MediaMTX 和僵尸进程计数均为 0。PC 临时摄像头 FFmpeg 与临时
+  MediaMTX 也已停止，录像、配置和板卡证据未删除。
+
+### Phase 5 增量：C17 运行指标采样工具
+
+- 新增 `gateway-metrics`，可在同一单调时钟窗口内采样最多 16 个 Linux PID，输出
+  elapsed、标签、PID、状态、CPU、RSS 和文件描述符数 CSV。100% CPU 明确定义为一个
+  逻辑 CPU，首样本因没有前一 tick 基线而留空。
+- `/proc/<pid>/stat` 解析从进程名最后一个右括号定位字段，兼容名称中的空格/右括号和
+  前置有符号终端字段；`VmRSS` 必须以 kB 表示。任何目标消失都会输出 unavailable 并使
+  工具非零退出，避免采样期间重启被静默忽略。
+- 单元测试覆盖 stat/status 正常与非法输入、负终端字段和当前进程读取；CLI 端到端使用
+  `self=self` 运行 1 秒并验证 CSV 中没有 unavailable。详细指标口径与待执行矩阵写入新的
+  `docs/benchmark-results.md`，未产生的实板数据保持 PENDING。
+- 完整常规 CTest 28/28、ASan/UBSan 28/28、既有适用 TSan 7/7 PASS；CMake 临时安装树
+  同时包含 `gatewayd` 和 `gateway-metrics`。`git diff --check`、显式 `(void)` 调用和
+  `system()`/`popen()` 扫描通过。
+
+### Phase 5 增量：RK3588 短时软硬件性能基线
+
+- `gateway-metrics` 已安装到板卡并通过 1 秒自采样；板卡 Release 构建和完整 CTest 为
+  28/28 PASS。PC 摄像头 RTSP 抓取成 15 秒、14,972,221 bytes 的 H.264 1080p25 固定样本，
+  SHA-256 已记录，且由软件解码器完整校验无错误。
+- 第一轮直接读取在线 RTSP 的对比判为无效：软件解码出现宏块错误，MediaMTX 报告慢读并
+  丢弃帧，两条硬件命令也产生重复帧。原始日志保留用于解释方法修订，未纳入性能表。
+- 固定样本正式微基准在相同 12 秒墙钟窗口运行，2 秒预热后采样 10 秒。软件路径为
+  306.7% CPU、158.7 MiB RSS、12.46fps/0.498x；MPP 为 75.4%、17.2 MiB、
+  492.93fps/19.7x；MPP+RGA 为 75.2%、18.1 MiB、497.70fps/19.9x。三组均 0 丢帧且无告警。
+- 三条路径各自生成的 3 秒 H.264 1080p25 Matroska 均通过 ffprobe 和完整软件解码，避免
+  把 null muxer 的进度当成输出正确性证明。软件使用 Debian FFmpeg/libx264，硬件使用
+  FFmpeg-Rockchip，报告明确限制结论为完整实现路径对比。
+- 正式服务另做 10 秒同步基线：gatewayd/FFmpeg/MediaMTX CPU 平均值为
+  0.2%/18.6%/9.1%，RSS 为 2.14/18.72/45.10 MiB；通道保持 25.35fps、1.02x、0 丢帧、
+  0 重启，输出 H.264 1080p25。普通用户受 `/proc` 权限限制，最终以同一非 root 服务账号
+  采样，未通过 root 绕过服务边界。
+- 验收结束后板卡服务保持 enabled 但已优雅停止，板卡和 PC 临时进程均清理；未执行
+  30 分钟或更长测试。完整表格、限制和证据路径见 `docs/benchmark-results.md`。
+
+### Phase 5 增量：固定样本基准运行器
+
+- 新增可安装的 `run_transcode_benchmark.sh`，以同一本地固定文件运行
+  `software`、`mpp` 或 `mpp-rga` 单一路径。默认预热 2 秒、采样 10 秒、
+  1 秒间隔，并为每条路径产生指标、progress、stderr、温度和命令记录。
+- 运行器使用 Bash 数组执行 FFmpeg，不使用 `eval` 或 shell 命令字符串；只接受
+  可读本地普通文件，要求绝对且非根输出目录，拒绝覆盖任何同模式结果。
+  `mpp` 不允许隐式缩放，改变分辨率必须选择 `mpp-rga`。
+- 性能采样结束后只向刚刚启动的确切 FFmpeg PID 发送 SIGINT。脚本另生成
+  短 Matroska 输出，校验 H.264/分辨率并用软件 FFmpeg 完整解码，不把 null
+  muxer 的进度当作媒体正确性证明。
+- CTest 行为测试使用可控 C 夹具和伪 ffprobe/metrics，覆盖软件缩放、
+  RGA 缩放、MPP 非法缩放、防覆盖与无 `eval`。ASan 下暴露的零预热启动
+  信号竞态已通过测试使用 1 秒预热修正；生产默认值仍为 2 秒。
+- 完整常规 CTest 29/29、ASan/UBSan 29/29、适用 TSan 7/7 PASS；CMake 临时
+  安装树包含可执行运行器。Bash 语法、`git diff --check`、无 `eval`、
+  无 `system()`/`popen()` 及无显式 `(void)` 弃值调用扫描均通过。
+
+### Phase 5 增量：RK3588 720p 真实缩放短测
+
+- 板卡同步提交 `ef5e8b5` 的运行器后，Release 构建和完整 CTest 29/29 PASS。
+  系统 `/usr/bin/cmake` 仅 3.18.4，不满足项目 3.20 最低版本；构建明确使用已有的
+  `/home/cat/.local/bin/cmake` 3.31.10。用户级 Python CMake 在 `sudo` 下丢失模块路径，
+  因此只用 `sudo install` 安装已验证的单个运行器，源码与安装副本 SHA-256 一致。
+- 两条路径共用已验证的 PC 摄像头 H.264 1080p25 固定样本，输出统一为
+  H.264 1280×720@25、3000 kbit/s。每条仅预热 2 秒、采样 10 秒，未重新
+  占用 PC 摄像头，未执行 30 分钟测试。
+- 软件解码+swscale+libx264 为 CPU 282.2%/300.0%、RSS 137.5/138.4 MiB、
+  19.20fps/0.768x；MPP 解码+RGA 缩放+MPP 编码为 137.5%/146.0%、
+  18.3/18.4 MiB、1038.54fps/41.5x。两者均 drop=0，CSV 无 unavailable。
+- 两条路径各产生 3 秒 H.264 720p25 Matroska，ffprobe 和独立完整软件解码
+  均 PASS。软件路径仅有像素范围弃用警告，无解码/编码错误；硬件路径
+  stderr 为空。原始证据位于板卡仓库外的 `phase5-720p/`。
+- 验收后板卡 gatewayd/FFmpeg/MediaMTX 和僵尸进程均为 0；两个 systemd 服务
+  保持 enabled/inactive，没有因微基准改变服务状态。
+
+### Phase 5 增量：C17 指标汇总
+
+- `gateway-metrics --summary-output FILE` 在采样的同一进程内为每个目标统计
+  available/unavailable 样本、CPU 样本数与平均/峰值、RSS 平均/峰值及
+  FD 最小/最大值，避免后续码率矩阵人工拷贝和计算 CSV。
+- 汇总路径使用 C17 `fopen(..., "wx")` 排他创建；文件已存在时在采样前失败，
+  不覆盖旧证据。目标不可用时仍在汇总中保留计数，且 CLI 继续非零退出。
+- 固定样本运行器现在自动产生 `metrics-summary.csv` 并将其纳入防覆盖检查。
+  开发机集成测试覆盖真实 self 采样、汇总字段边界、防覆盖和运行器传参。
+- 完整常规 CTest 30/30、ASan/UBSan 30/30、适用 TSan 7/7 及 CMake 临时安装
+  均 PASS。Bash 语法、`git diff --check`、无 `eval`、无 `system()`/`popen()` 及
+  无显式 `(void)` 弃值调用扫描通过。
+
+### Phase 5 增量：RK3588 720p 码率矩阵
+
+- 提交 `7fd1f3d` 同步板卡后，Release 构建和完整 CTest 30/30 PASS；安装后
+  `gateway-metrics` 的 1 秒 self 汇总为 6 个 available、0 个 unavailable 样本。
+- 在已有 3000 kbit/s 基线上，以相同 PC 摄像头固定样本补充 1500 和
+  6000 kbit/s；每个码率分别运行软件+swscale 和 MPP+RGA，输出统一为
+  H.264 1280×720@25。四个新增模式均仅预热 2 秒、采样 10 秒。
+- 软件 1500k/6000k 的 CPU 平均为 261.3%/283.0%，RSS 为 138.0/138.1 MiB，
+  吞吐为 20.16/17.97fps；MPP+RGA 为 135.6%/158.1%、18.3/18.0 MiB、
+  1031.72/1011.65fps。四组均 drop=0，汇总均为 11 available、0 unavailable。
+- 四份 3 秒输出均经 ffprobe 确认为 H.264 720p25，并通过独立完整软件解码。
+  无解码/编码错误；板卡清理后无媒体或僵尸进程，systemd 服务保持
+  enabled/inactive。原始证据分别位于 `phase5-bitrate-1500/` 和 `phase5-bitrate-6000/`。
+- 短测显示软件路径在更高码率下吞吐降低，硬件路径保持约 1kfps；但每组
+  仅 10 个 CPU 有效样本且起始温度不同，不将小幅差异伪装成长时趋势。
+
+### Phase 5 增量：重复固定样本多通道容量运行器
+
+- 新增可安装的 `run_capacity_benchmark.sh`，允许 1～8 路并发调用已验证的
+  单路基准运行器。每路使用独立目录、原始指标、汇总、progress和实际验证输出。
+- 容量运行器产生 `capacity-summary.csv` 和 `capacity-total.csv`，合计每路平均 CPU、
+  RSS 和 FD 上界。合计值是各路同时短窗口的平均值之和，不伪装成已时间对齐的整机峰值。
+- 输出根目录必须是不存在的绝对非根路径；脚本使用 Bash 数组保存精确 runner PID，
+  中断时向每个 runner 发送 TERM，由单路运行器继续清理其精确 FFmpeg PID。
+- 开发机行为测试使用四路就绪屏障，任何串行实现都会超时；同时验证合计值、
+  防覆盖、8 路上限和无 `eval`。本工具必须明确称为“重复固定样本”容量测试，
+  不得写成多个真实摄像头通过。
+- 完整常规 CTest 31/31、ASan/UBSan 31/31、适用 TSan 7/7 及临时安装树均
+  PASS；新运行器以可执行文件安装。Bash 语法、无 `eval`、无 `system()`/`popen()`
+  和 `git diff --check` 扫描通过。
+
+### Phase 5 增量：RK3588 1/2/4 路重复固定样本容量
+
+- 提交 `17c6084` 同步板卡后 Release 构建和完整 CTest 31/31 PASS，运行器
+  安装副本与源码 SHA-256 一致。
+- 1/2/4 路 MPP 解码+RGA 720p 缩放+MPP 编码总吞吐分别为
+  1029.98/1056.78/1061.94fps；每路为 1029.98、528.38～528.40 和
+  265.23～266.14fps。总吞吐趋于约 1.06kfps 饱和，4 路每路仍高于 25fps。
+- CPU 平均合计为 137.8%/125.2%/152.2%，RSS 平均合计为
+  18.1/35.8/71.5 MiB，结束温度为 51.8/57.3/63.8°C。这些是各路平均值
+  的合计，不是整机同步峰值。
+- 全部 7 路均 11 available/0 unavailable、drop=0；7 份 3 秒 H.264 720p25 输出均
+  通过 ffprobe 和独立完整软件解码。清理后无媒体/僵尸进程，服务保持
+  enabled/inactive。证据位于板卡 `phase5-capacity-{1,2,4}/`。
+- 本次不包含 gatewayd/MediaMTX/网络负载，且是重复同一固定文件；报告不将它
+  伪装为四个真实摄像头或完整在线业务通过。
+
+### Phase 5 增量：时间戳延迟测量与发布 GOP
+
+- PC 生成带 Unix 秒级画面时间戳的 H.264 720p25 RTSP 源，板卡正式 `gatewayd`
+  经 MPP/RGA 转为 1080p，再发布到只监听回环的 MediaMTX；没有为测试放宽安全边界。
+- 两端 NTP 已同步；5 次往返中点探测显示板卡稳定落后 PC 约 214～218ms，RTT
+  22～32ms。修复前 5 次独立连接首帧平均 8.050s，范围 7.824～8.398s。
+- 根因是 MPP 默认 250 帧 GOP，且输出端未显式指定受支持的 RTSP transport。管线现将
+  GOP 设置为 `2 * fps`，并在输出 muxer 后明确使用 RTSP/TCP；25fps 实板日志确认
+  `gop=50`，不支持的传输错误为 0。
+- 修复后 5 次独立连接首帧平均 2.038s，范围 1.900～2.286s，平均降低 74.7%；
+  单连接连续取 5 帧的稳定画面年龄约 1.25±0.5s。后者误差来自整秒叠字，不宣称亚秒。
+- 开发机常规 31/31、ASan/UBSan 31/31、适用 TSan 7/7 PASS；板卡 Release 相关
+  4/4 和完整 31/31 PASS。清理后临时进程和 zombie 为 0，服务 enabled/inactive。
+- 原始证据位于板卡仓库外 `phase5-latency/`；浏览器 WebRTC 缓冲没有单独测量。
+
+### Phase 5 增量：完整演示与安装交付
+
+- 新增可安装的 `docs/demo.md`，从非 root 服务启动连续覆盖健康/通道查询、RTSP/WebRTC
+  播放、HTTP 控制、录像回放、故障恢复和精确进程清理，并明确视频-only 和网络边界。
+- README 增加组件职责表，明确 `gatewayd`、指标与脚本属于本项目，FFmpeg-Rockchip、
+  MPP/RGA 和 MediaMTX 属于独立上游组件。
+- 部署契约测试会验证演示文档包含关键组件、API、播放地址和无音频范围，并将其纳入
+  已知测试密码扫描；相关测试 1/1 PASS。
+- CMake 临时安装树包含两个程序、两个示例配置、两个 systemd 单元、tmpfiles、环境示例、
+  两份文档和三个可执行脚本；程序 `--help` 和文件权限检查 PASS。
+- 演示记录只引用已经完成的 Phase 4/5 实板证据；没有把双真实输入、长稳或音频写成通过。
+
+### Phase 5 增量：最终发布门禁与资源清理
+
+- GCC `-fanalyzer` 发现基准 FFmpeg 测试夹具的换行写入失败分支会因 `||` 短路跳过
+  `fclose()`；现分别保存写入和关闭结果并无条件关闭，相关行为测试 1/1 PASS。
+- 全量分析器构建剩余 6 条既有跨函数告警：HTTP listener 所有权 2 条、已初始化的单字符
+  转义缓冲区 2 条、工作进程 `fail` 路径管道所有权 2 条；沿实际释放路径人工复核。
+- 最终顺序门禁为 Debug 31/31、Release 31/31、ASan/UBSan 31/31、适用 TSan 7/7 PASS。
+  两次沙箱内完整运行的唯一失败均是回环 bind 被拒绝；获准使用本机回环后完整复跑通过。
+- 临时安装、Bash 语法、私钥/令牌模式、非示例凭据 URL、危险进程启动、`eval`、显式
+  `(void)函数调用` 和 `git diff --check` 检查通过。
+- 板卡运行时代码已在低延迟修复部署后完成 Release 31/31；验收结束时服务
+  enabled/inactive，无 gatewayd/FFmpeg/MediaMTX/zombie。最终 SSH ControlMaster 随后
+  失效，因此没有为了纯文档变更要求再次输入密码，也没有伪造重复板卡回归。
+
+### 实时 OSD 增量 1：后台 FFmpeg 进程指标快照
+
+- `process_metrics` 新增有状态 CPU 采样器，以相邻单调时钟采样和 `/proc/<pid>/stat`
+  累计 tick 计算 CPU 百分比；首次采样、PID 更换、tick 回退或进程消失时明确取消 CPU
+  基线，不沿用旧进程数据。
+- 通道管理器新增独立的一秒周期采样线程。`/proc` 读取在 HTTP 请求路径之外完成，只有最终
+  小型快照在读写锁内发布；停止通道、工作进程 PID 变化或配置代次变化时，读取方立即得到
+  unavailable，而不是过期 RSS/CPU。
+- 确定性单元测试覆盖首次无基线、正常增量、PID 更换、进程消失和 tick 回退；管理器集成
+  测试覆盖真实子进程 RSS/CPU、停止后 unavailable、新 PID 重建基线和四线程并发读取。
+- 2026-08-07 开发机相关常规测试 2/2、对应 TSan 2/2 PASS；完整 CTest 和
+  ASan/UBSan 在 OSD 页面增量完成后统一执行。本增量尚未进行 RK3588 验收。
+
+### 实时 OSD 增量 2：原生浏览器诊断页与指标 API
+
+- 新增 `GET /v1/channels/{id}/metrics`，只输出通道 ID、状态、当前 FFmpeg PID、探测与
+  progress 数据、失败/重启计数和后台 CPU/RSS 快照；不返回输入 URL、密码、录像目录或
+  其他文件系统路径。停止、退避和 PID 切换期间的实时字段使用 null/unavailable。
+- 新增 `GET /view/{id}`。页面是独立的 `web/diagnostic.html`，使用原生 HTML/CSS/
+  JavaScript 和 MediaMTX iframe，每秒刷新 JSON；没有 Node/npm、CDN 或前端框架。
+  C17 只负责安全路由、静态文件返回和嵌入式主线逻辑，不再用 C 字符串拼接页面。
+- OSD 是浏览器透明覆盖层，不经过 FFmpeg，不改变 MPP/RGA、编码、实时流或录像。页面是
+  轻量嵌入式诊断工具，不是复杂监控管理平台。
+- 页面响应包含 CSP、no-store、nosniff 和 no-referrer；通道 ID 不插入 HTML，JSON 使用
+  有界转义，浏览器只用 `textContent` 更新字段。
+- 2026-08-07 开发机页面/路由、JSON、停止 unavailable、PID 恢复、静态资源和转义相关
+  常规 5/5、适用 TSan 4/4 PASS。HTTP 端到端在受限沙箱首次因回环 bind 被拒绝，获准在本机
+  回环复跑后通过；临时安装布局加载页面也通过。完整 ASan/UBSan 与 RK3588 实板仍待执行。
+
+### 实时 OSD 增量 3：开发机完整门禁与实板连接审计
+
+- 2026-08-07 顺序执行 Debug、Release 和 ASan/UBSan 完整测试，均为 31/31 PASS；
+  LeakSanitizer 仍按既有 ptrace 环境约束关闭。适用 TSan 扩展纳入 process_metrics 后为
+  8/8 PASS。
+- CMake 临时安装树包含独立 `diagnostic.html`，文件与源码一致；把 HTTP 单元测试放入
+  安装布局后可从相对共享目录加载页面，避免把开发机绝对源码路径写入二进制或响应。
+- 尝试只读连接 `cat@192.168.1.45` 两次均返回 `No route to host`。开发机仍为
+  `192.168.1.16/24`，到目标的路由选择为 Wi-Fi 接口，因此没有在板卡离线时伪造部署、
+  真实画面、OSD、断流恢复或录像验收；这些项目继续保持 PENDING。
+
+### 实时 OSD 增量 4：RK3588 部署与离线源状态验收
+
+- 连接恢复后先确认目标为 `lubancat`、aarch64、用户 `cat` 和预期项目目录。板卡原源码
+  目录没有 Git，因此没有直接覆盖；使用独立
+  `/home/cat/rk3588-media-gateway-osd-20260807` staging 解包提交快照、Release 构建和测试。
+- 板卡 GCC 10.2.1、CMake 3.31.10 构建无警告，完整 Release CTest 31/31 PASS。安装前已
+  将旧 gatewayd 备份为 staging 下 `gatewayd.pre-osd`。
+- 用户级 CMake 在 sudo 环境首次因 Python 模块路径缺失而退出，未写安装文件；随后使用
+  系统 CMake 3.18 执行已由 3.31 生成的安装脚本成功。安装包含 gatewayd、gateway-metrics
+  和 `/usr/local/share/rk-media-gateway/web/diagnostic.html`，未改 `/etc` 真实配置或凭据。
+- systemd 重载并重启后 gatewayd PID 从 951 变为 15969，gatewayd 和 MediaMTX 均 active。
+  `/view/cam01` 返回 HTTP 200、HTML Content-Type、CSP/no-store/nosniff/no-referrer；板卡
+  页面 SHA-256 与开发机源文件一致。
+- PC 当前没有 `/dev/video*`、MediaMTX 或 FFmpeg 推流进程，通道真实报告 BACKOFF。
+  指标 API 将 PID、输入、progress、CPU 和 RSS 全部报告 unavailable，证明离线时不保留
+  过期值；不能据此宣称真实画面、RUNNING 指标、浏览器同屏或恢复验收通过。
+
+### 当前增量：FAILED 无人值守恢复修复
+
+- 旧实现超过 `max_retries` 后从 supervisor 返回，启用通道永久停在 `FAILED`；此前短暂
+  断流恢复记录不能证明长期无人值守恢复。
+- 默认守护模式现在将 `FAILED` 定义为可恢复状态：前 `max_retries` 次保持指数退避，耗尽后
+  按 `max_backoff_sec` 低频等待并重新进入 `PROBING`。等待可被 stop、disable、reload 和
+  进程退出及时打断；`--exit-when-idle` 单次执行模式仍允许耗尽后结束。
+- 每次失败等待前清除 PID、输入探测、progress 和 CPU/RSS，恢复后的新 PID 重新建立指标
+  基线；稳定运行达到 `stable_run_sec` 后只清零连续失败数，累计重启数保留。
+- 诊断页检测到非 RUNNING 状态重新进入 `RUNNING` 时会重载一次 MediaMTX iframe，支持页面
+  先打开、输入后恢复时自动出现画面。
+- 开发机完成编译和关键既有回归 5/5 PASS。按用户要求不继续扩写模拟测试，最终结论以
+  RK3588 先启动、PC 长期不推流、超过上限后再推流的人工真实验收为准；当前为 `PENDING`。
+- 提交 `c1a7832` 已在独立板端 staging
+  `/home/cat/rk3588-media-gateway-recovery-20260807` 用 aarch64 GCC 10.2.1 Release 构建并
+  安装。部署二进制和页面分别与 staging 产物 SHA-256 一致；旧文件保存在 staging 的
+  `gatewayd.pre-recovery` 和 `diagnostic.pre-recovery.html`。
+- `rk-media-gateway.service` 于 2026-08-07 13:20:30 CST 以 PID 580812 启动并保持 active；
+  PC 未推流时 cam01 已重新进入退避，当前字段为 unavailable。真实 `FAILED` 后恢复画面仍
+  等待用户启动 PC 推流，不能据此标为 PASS。
+
+### 当前增量：五分钟演示拓扑收口
+
+- 审计确认旧 OSD 文档和页面把 8889 TCP SSH 转发当成完整 WebRTC，这是错误结论。板端
+  实际由 MediaMTX PID 928 监听 `*:8889/TCP` 和 `*:8189/UDP`；gatewayd PID 580812 只监听
+  `127.0.0.1:9080`。推荐拓扑改为仅 SSH 转发 9080，浏览器通过真实板卡 IP 直连
+  8889 信令和 8189 ICE 媒体。
+- `/view/{id}` 现在接受经过严格校验的 `media_host` 查询参数；HTTP 路由只用查询参数前的
+  path 查找通道，不回显参数。页面处理 IPv4、IPv6 和 DNS 主机名，拒绝端口、路径、凭据、
+  空白和 IPv6 zone ID。CSP 继续禁止外部脚本和非自身 JSON 请求，iframe 只允许 HTTP。
+- 页面在首次输入离线时保留 OSD；非 RUNNING 回到 RUNNING 时重载一次播放器，连续
+  RUNNING 或临时 JSON 失败不做无意义重载。
+- 新增 PC 专用 MediaMTX 配置和 `run_pc_camera_source.sh`。二进制/配置必须位于持久目录，
+  PC WebRTC 等无关协议关闭；脚本检查摄像头格式、路由 IP、8554 冲突和本机 RTSP 输出，
+  只停止本轮记录的明确 PID。当前 PC 发现旧 MediaMTX PID 193951 使用持久目录
+  `/home/zane/mediamtx/source.yml` 占用 8554，真实清洁演示前需从原终端正常停止；当前没有
+  `/dev/video0`，真实摄像头验收仍为 `PENDING`。
+- 页面行为、PC 源预检、HTTP/CSP、状态机、supervisor 和一次性耗尽语义关键回归 8/8
+  PASS，随后 Debug 完整 CTest 33/33 PASS。ASan/UBSan、TSan、重新部署和真实浏览器/WebRTC
+  验收尚未执行，均为 `PENDING`，不能用本轮自动化结果替代。
+- 现有恢复版的真实后端时间线已得到补充证据：gatewayd PID 580812 从 13:20:30 保持不变，
+  13:25:07、13:25:37、13:26:07、13:26:37 连续按 30 秒处于 FAILED；PC MediaMTX 于
+  13:24:32 启动但无发布，摄像头 FFmpeg 到 13:29:38 才启动。gatewayd 随后自动以探测 PID
+  613458 成功，工作 PID 613691 于 13:29:47 回到 RUNNING，13:30:47 stable；当前约 25 FPS、
+  丢帧 0、CPU 13.9%、RSS 19636 KiB。这证明“长期 FAILED 后后端无人值守恢复”为 PASS。
+  该次仍使用旧 PC 手工进程和尚未修正拓扑的已部署页面，因此新版单脚本、浏览器自动出画
+  和重复 `s`/`r` 恢复仍为 PENDING。
+- 首轮 ASan/UBSan 完整门禁中 publish recovery 在 4 秒轮询窗口截止后才进入第一次退避，
+  32/33 PASS；日志没有 sanitizer 报告。测试观察窗口放宽到 10 秒、CTest 上限 15 秒，生产
+  退避配置不变。该用例单独复跑 PASS，随后 ASan/UBSan 完整 33/33 PASS；Release 33/33、
+  适用 TSan 8/8 也通过。最终提交后的 Debug/Release 顺序复跑仍按测试计划执行。
+
+### 当前增量：五分钟演示真实验收收口
+
+- 当前提交在板端 staging `/home/cat/rk3588-media-gateway-ab72fa3` 使用 aarch64 GCC 10.2.1
+  Release 构建并精确安装。安装后的 `gatewayd` 和 `diagnostic.html` 与 staging 产物
+  SHA-256 一致；真实 `/etc/rk-media-gateway` 配置未被覆盖。
+- `rk-media-gateway.service` 于 2026-08-07 15:01:30 CST 启动，gatewayd PID 945811。
+  PC 保持无 8554 监听后，cam01 在 15:04:36 以 failures=11 超过 `max_retries=10` 进入
+  FAILED；15:05:06 完成下一次 30 秒低频探测并以 failures=12 继续 FAILED，服务 PID
+  未变化，PID、输入、progress、CPU/RSS 均为 unavailable。
+- PC `/dev/video0` 预检确认 MJPEG 1280x720@30，PC 地址 192.168.1.16、MediaMTX v1.20.0
+  和 TCP 8554 均符合要求。用户只通过 9080 SSH 隧道打开
+  `/view/cam01?media_host=192.168.1.45`，确认离线 OSD 后启动专用源脚本；未调用控制接口，
+  未重启任何板端服务。
+- 同一 gatewayd 于 15:09:37 从长期 FAILED 进入 PROBING，15:09:40 探测成功并启动工作
+  PID 975340，15:09:43 回到 RUNNING。用户确认浏览器无需刷新即自动出现真实 WebRTC 画面
+  和 OSD；15:10:43 stable 后连续失败数清零。在线快照为 H.264 1920x1080、约 25.11 FPS、
+  丢帧 0、CPU 17.97%、RSS 16620 KiB。
+- 用户随后按源脚本的行输入控制停止并恢复 PC FFmpeg。板端工作 PID 992453 于 15:18:17
+  退出后独立进入 BACKOFF/PROBING，15:18:34 探测恢复输入，工作 PID 1007577 于 15:18:37
+  回到 RUNNING；gatewayd PID 仍为 945811。恢复快照约 25.87 FPS、丢帧 0、CPU 21.95%、
+  RSS 16640 KiB，用户再次确认画面与 OSD 自动恢复。越过 `stable_run_sec` 后 worker 仍为
+  1007577，consecutive_failures 清零，约 25.11 FPS、丢帧 0、CPU 20.97%、RSS 15580 KiB。
+- 源脚本控制是行输入而非单键即时输入。实际验收暴露提示歧义后，提示及用户文档统一改为
+  “输入 `s`/`r`/`q` 后按回车”；这不改变媒体或监督逻辑。
+- 单路五分钟演示闭环为 PASS。双 PC 双真实输入和 30 分钟及更长长稳未执行；分别保持
+  `PENDING` 和 `SKIPPED`。音频、AI 和可移动 OSD 不属于本次主线收口。
+
+## 5. 当前能力边界
+
+已经具备：
+
+- 多个启用通道的独立线程和工作进程监督。
+- 每次工作进程启动前执行 ffprobe，校验首个视频流的编码和尺寸。
+- 可通过同步观察回调取得单通道生命周期快照。
+- 结构化进度、最终指标和受控 stderr 日志。
+- 信号停止、超时清理、自动重试和可低频恢复的 `FAILED` 状态。
+- SIGHUP 候选配置校验与按通道差异化重载。
+- 开发机夹具模拟输入或发布端中断后，故障通道可独立退避并恢复运行。
+- 本地 HTTP 健康检查、通道状态查询，以及并发安全的启动、停止和重启控制。
+- MediaMTX 录像配置生成、自动保留参数和录像文件系统健康状态。
+- gatewayd/MediaMTX systemd 单元、非 root 权限边界与部署文档。
+- 开发机假工作进程端到端验证。
+- RK3588 上的真实 PC 摄像头 RTSP、MPP/RGA 转码、RTSP/WebRTC 播放与 HTTP 控制。
+- MediaMTX 真实录像、回放、自动删除、低空间状态和停止后重新发布恢复。
+- 输入 EOF、FFmpeg SIGKILL 和 MediaMTX 停止后的退避及自动恢复。
+- systemd 非 root 设备权限、开机启动、优雅停止以及 gatewayd/MediaMTX 崩溃恢复。
+- 可安装的 C17 进程指标采样工具及原始/汇总 CSV 输出。
+- gatewayd 后台采样每路 FFmpeg CPU/RSS，并通过需要受校验 `media_host` 的轻量浏览器
+  诊断页显示 WebRTC 画面和一秒刷新 OSD；新版真实浏览器和自动恢复已在单路实板 PASS。
+
+当前限制：
+
+- 音频采集、编码、发布和录像；当前链路固定使用 `-an`。
+- RK3588 30 分钟及更长稳定性、双真实输入板卡验收。
+- 浏览器 WebRTC 缓冲拆分和亚秒低延迟专项调优；RTSP 时间戳短测约 1.25±0.5 秒。
+
+## 6. 后置验收队列
+
+五分钟单路演示闭环已经收口，不进入 AI 或其他 Phase 扩展。后置项为：
+
+1. 条件具备时使用第二个真实 RTSP 源完成双真实输入隔离和在线资源验收。
+2. 30 分钟及更长稳定性、音频、AI 和辅助界面增强均不在当前目标内。
+
+## 7. 文档职责
+
+- `README.md`：项目入口、能力边界和文档导航。
+- `docs/demo.md`：第一次运行、完整视频链路和五分钟演示。
+- `docs/code-reading-guide.md`：按依赖顺序理解源码和准备面试。
+- `docs/deployment.md`：前台验证通过后的非 root systemd 部署。
+- `ARCHITECTURE.md`：架构、模块职责、阶段与最终验收标准。
+- `docs/test-plan.md`：开发者可重复执行的测试和实际验收记录。
+- `docs/development-status.md`：当前进度、关键约定、提交和下一步。
+- `docs/benchmark-results.md`：可复现的性能数据和适用边界。

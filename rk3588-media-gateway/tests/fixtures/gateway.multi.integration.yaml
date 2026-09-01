@@ -1,0 +1,48 @@
+server:
+  enabled: false
+  listen: 127.0.0.1
+  port: 9080
+
+mediamtx:
+  publish_base_url: rtsp://127.0.0.1:8554
+
+defaults:
+  probe_timeout_sec: 1
+  startup_timeout_sec: 1
+  progress_timeout_sec: 1
+  stable_run_sec: 1
+  stop_timeout_sec: 1
+  max_retries: 0
+  max_backoff_sec: 1
+
+channels:
+  - id: cam01
+    enabled: true
+    input:
+      type: rtsp
+      url: rtsp://fixture-user:fixture-password@camera/live-one
+      transport: tcp
+    video:
+      decoder: h264_rkmpp
+      width: 1280
+      height: 720
+      encoder: h264_rkmpp
+      bitrate_kbps: 4000
+      fps: 25
+    output:
+      path: cam01
+  - id: cam02
+    enabled: true
+    input:
+      type: rtsp
+      url: rtsp://fixture-user:fixture-password@camera/live-two
+      transport: tcp
+    video:
+      decoder: h264_rkmpp
+      width: 1280
+      height: 720
+      encoder: h264_rkmpp
+      bitrate_kbps: 4000
+      fps: 25
+    output:
+      path: cam02

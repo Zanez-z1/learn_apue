@@ -1,5 +1,5 @@
 
-CFLAGS += -Wall
+CFLAGS += -Wall 
 all:mytbf
 
 mytbf:main.o mytbf.o

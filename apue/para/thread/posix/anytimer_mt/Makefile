@@ -1,9 +1,10 @@
 
-CFLAGS += -Wall
+CFLAGS += -Wall -pthread
+LDFLAGS += -pthread
 all:anytimer
 
 anytimer:main.o anytimer.o
-	gcc $(CFLAGS) $^ -o $@
+	gcc $(CFLAGS) $(LDFLAGS) $^ -o $@
 
 
 clean:

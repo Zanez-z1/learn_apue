@@ -20,12 +20,12 @@
  *          == -ECANCELED   失败，指定任务重复取消
  *
  *
- * at_waitttimer(id):          回收任务
+ * at_waittimer(id):          回收任务
  *
  * return   == 0            成功，指定任务成功释放
  *          == -EINVAL      失败，参数非法
  */
 int at_addtimer(int sec, void (*func)(void *), void *arg);
 int at_canceltimer(int id);
-int at_waitttimer(int id);
+int at_waittimer(int id);
 #endif

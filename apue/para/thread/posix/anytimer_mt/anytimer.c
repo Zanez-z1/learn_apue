@@ -1,15 +1,10 @@
-#include <asm-generic/errno-base.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
-#include <sys/time.h>
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <string.h>
 #include "anytimer.h"
-
-#define ANYTIMER_MAX    1024
 
 enum state{
 	running,
@@ -30,13 +25,13 @@ struct timer_st
 
 static struct timer_st *job[JOB_MAX];	/* 注册表:handler 靠它找到所有定时器 */
 static pthread_mutex_t mut_job = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t cond_job = PTHREAD_COND_INITIALIZER;
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 static pthread_t tid;
 
 /* 每 tick 被信号打断一次:遍历 job[],各定时器 sec--,到期的调 func(arg) 并回收槽位 */
 static void* thr_handler(void *p)
 {
+	(void)p;
 
 	/* TODO: 遍历 job[] 数组 */
 	while (1)
@@ -98,7 +93,6 @@ static void module_unload(void)	/* 前置声明:module_load 里要 atexit 它 */
 	}
 	pthread_mutex_unlock(&mut_job);
 	pthread_mutex_destroy(&mut_job);
-	pthread_cond_destroy(&cond_job);
 }
 
 static void module_load(void)

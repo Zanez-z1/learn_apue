@@ -1,11 +1,18 @@
-# 默认忽略已编译程序和临时文件
-  *
+# 默认忽略编译产物和临时文件，仅跟踪下面列出的源码与文档。
+*
 
-  # 保留目录及源码
-  !*/
-  !*.c
-  !*.h
-  !*.s
-  !Makefile
-  !*.txt
-  !.gitignore
+# 允许进入子目录，并保留源码、构建文件和文档。
+!*/
+!*.c
+!*.h
+!*.s
+!*.S
+!Makefile
+!makefile
+!GNUmakefile
+!*.mk
+!CMakeLists.txt
+!*.cmake
+!*.txt
+!*.md
+!.gitignore
